@@ -7,7 +7,7 @@ export function formatCompactTokens(n: number): string {
 
 export function formatDuration(seconds: number): string {
   const total = Number.isFinite(seconds) ? Math.max(0, Math.round(seconds)) : 0;
-  if (total < 60) return '0分钟';
+  if (total < 60) return `${total}秒`;
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   if (hours === 0) return `${minutes}分钟`;

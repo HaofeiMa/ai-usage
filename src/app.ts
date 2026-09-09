@@ -129,6 +129,22 @@ function stackedBars(
   return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">${bars}</svg>`;
 }
 
+function extensionInstallHelp(): string {
+  return `
+    <section class="settings">
+      <h2>ChatGPT 网页扩展</h2>
+      <p>尚未采集到 ChatGPT 网页用量。在 Chrome / Edge 中加载已解压的扩展：</p>
+      <p><code>${esc(remote?.extensionPath ?? '')}</code></p>
+      <ol>
+        <li>打开 Chrome / Edge 的扩展页：<code>chrome://extensions</code> 或 <code>edge://extensions</code></li>
+        <li>打开「开发者模式」</li>
+        <li>选择「加载已解压的扩展程序」，指向上面的 <code>extension/</code> 目录</li>
+        <li>打开并刷新 chatgpt.com，之后用量会写入本机 jsonl</li>
+      </ol>
+    </section>
+  `;
+}
+
 function distList(rows: ReturnType<typeof distribution>, chatgptKeys = false): string {
   if (rows.length === 0) return '<div class="empty">暂无分布数据</div>';
   const top = rows.slice(0, 10);
@@ -170,6 +186,10 @@ function sliceData(snapshot: Snapshot) {
 function render(root: HTMLElement) {
   const snapshot = remote?.snapshot ?? { buckets: [], sessions: [] };
   const missing = !remote || remote.missingSnapshot || !remote.snapshot;
+  const hasChatgpt =
+    (remote?.snapshot?.buckets ?? []).some((row) => row.source === 'chatgpt-web') ||
+    (remote?.snapshot?.sessions ?? []).some((row) => row.source === 'chatgpt-web');
+  const chatgptEmpty = view === 'chatgpt' && !hasChatgpt;
   const { optionBuckets, buckets, sessions } = sliceData(snapshot);
   const cards = summaryCards(buckets, sessions);
   const chatgptInPlay =
@@ -207,6 +227,7 @@ function render(root: HTMLElement) {
     </div>
     <div class="content">
       ${missing ? `<div class="banner">暂无本地快照。请点击页脚「更新数据」采集本机用量（写入 ${esc(remote?.home ?? '~/.ai-usage')}）。</div>` : ''}
+      ${chatgptEmpty ? `<div class="banner">ChatGPT 分段还没有数据。请按下面的步骤加载浏览器扩展。</div>` : ''}
       ${remote?.lastError ? `<div class="error">上次更新失败：${esc(remote.lastError)}</div>` : ''}
       <div class="cards">
         <div class="card"><div class="label">总 Token</div><div class="value">${approxPrefix(chatgptInPlay)}${esc(formatCompactTokens(cards.totalTokens))}</div></div>
@@ -228,6 +249,7 @@ function render(root: HTMLElement) {
         <div><h2>按模型</h2>${distList(distribution(buckets, 'model'))}</div>
         <div><h2>按项目</h2>${distList(distribution(buckets, 'project'))}</div>
       </div>
+      ${chatgptEmpty && !settingsOpen ? extensionInstallHelp() : ''}
       ${settingsOpen ? `
         <section class="settings">
           <h2>设置</h2>

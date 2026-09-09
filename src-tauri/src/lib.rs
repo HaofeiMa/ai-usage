@@ -229,7 +229,36 @@ fn spawn_dump(app: AppHandle) {
     });
 }
 
+#[cfg(target_os = "macos")]
+fn set_activation_policy(app: &AppHandle, policy: tauri::ActivationPolicy) {
+    let _ = app.set_activation_policy(policy);
+}
+
+fn sync_autostart(app: &AppHandle) {
+    let home = ai_usage_home();
+    let mut cfg = ensure_config(&home);
+    if cfg.get("autostart").is_none() {
+        let _ = app.autolaunch().enable();
+        cfg["autostart"] = json!(true);
+        let _ = write_json(&config_path(&home), &cfg);
+        return;
+    }
+    let wanted = cfg.get("autostart").and_then(Value::as_bool).unwrap_or(false);
+    match app.autolaunch().is_enabled() {
+        Ok(false) if wanted => {
+            let _ = app.autolaunch().enable();
+        }
+        Ok(true) if !wanted => {
+            let _ = app.autolaunch().disable();
+        }
+        _ => {}
+    }
+}
+
 fn open_dashboard(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    set_activation_policy(app, tauri::ActivationPolicy::Regular);
+
     if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
         let _ = window.unminimize();
         let _ = window.show();
@@ -363,9 +392,7 @@ pub fn run() {
             build_tray(&app.handle())?;
             update_tray_title(&app.handle());
 
-            if let Ok(false) = app.autolaunch().is_enabled() {
-                let _ = app.autolaunch().enable();
-            }
+            sync_autostart(&app.handle());
 
             let handle = app.handle().clone();
             thread::spawn(move || {
@@ -379,11 +406,16 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() == WINDOW_LABEL {
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = window.destroy();
-                }
+            if window.label() != WINDOW_LABEL {
+                return;
+            }
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.destroy();
+            }
+            if let WindowEvent::Destroyed = event {
+                #[cfg(target_os = "macos")]
+                set_activation_policy(window.app_handle(), tauri::ActivationPolicy::Accessory);
             }
         })
         .build(tauri::generate_context!())

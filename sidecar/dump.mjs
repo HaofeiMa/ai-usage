@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, hostname as osHostname } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const VIBE_USAGE_SRC = fileURLToPath(new URL('../../vibe-usage-chatgpt-web/src/', import.meta.url));
@@ -38,13 +38,28 @@ async function loadVibeUsageModules() {
     parsers: parsersMod.parsers,
     normalizeParserResult: contractMod.normalizeParserResult,
     loadConfig: configMod.loadConfig,
+    saveConfig: configMod.saveConfig,
     ingest: apiMod.ingest,
   };
 }
 
+export function resolveStableHostname(config, hostname = osHostname()) {
+  const fromConfig = typeof config?.hostname === 'string' ? config.hostname.trim() : '';
+  if (fromConfig) return fromConfig;
+  return String(hostname || '').replace(/\.local$/, '');
+}
+
+export function stampHostname(items, hostname) {
+  if (!hostname) return items;
+  for (const item of items) {
+    if (!item?.hostname) item.hostname = hostname;
+  }
+  return items;
+}
+
 export async function collectLocal({ aiUsageHome } = {}) {
   applyAiUsageEnv(aiUsageHome);
-  const { parsers, normalizeParserResult } = await loadVibeUsageModules();
+  const { parsers, normalizeParserResult, loadConfig, saveConfig } = await loadVibeUsageModules();
 
   const buckets = [];
   const sessions = [];
@@ -69,6 +84,15 @@ export async function collectLocal({ aiUsageHome } = {}) {
     if (normalized.buckets.length > 0) buckets.push(...normalized.buckets);
     if (normalized.sessions.length > 0) sessions.push(...normalized.sessions);
   }
+
+  const config = loadConfig() || {};
+  const host = resolveStableHostname(config);
+  if (!config.hostname && host) {
+    config.hostname = host;
+    saveConfig(config);
+  }
+  stampHostname(buckets, host);
+  stampHostname(sessions, host);
 
   const syncedAt = new Date().toISOString();
   return {

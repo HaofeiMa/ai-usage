@@ -31,10 +31,11 @@ describe('filterByFacets', () => {
     expect(rows).toEqual(copy);
   });
 
-  it('keeps rows that omit a selected facet field', () => {
+  it('drops rows that omit a selected facet field', () => {
     const session = { source: 'cursor', project: 'ai-usage' };
-    expect(filterByFacets([session], { hostnames: ['mbp'], models: ['gpt-5'] })).toEqual([
-      session,
+    const matching = { source: 'cursor', project: 'ai-usage', hostname: 'mbp', model: 'gpt-5' };
+    expect(filterByFacets([session, matching], { hostnames: ['mbp'], models: ['gpt-5'] })).toEqual([
+      matching,
     ]);
   });
 });

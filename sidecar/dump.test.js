@@ -105,6 +105,31 @@ describe('sidecar dump', () => {
     expect(snapshotHasText(snapshot)).toBe(false);
   });
 
+  it('stampHostname fills missing hostnames and keeps sentinels', async () => {
+    const { stampHostname } = await import('./dump.mjs');
+    const rows = [
+      { source: 'codex' },
+      { source: 'cursor', hostname: 'cursor-cloud' },
+      { source: 'chatgpt-web', hostname: '' },
+    ];
+    stampHostname(rows, 'mbp.local');
+    expect(rows[0].hostname).toBe('mbp.local');
+    expect(rows[1].hostname).toBe('cursor-cloud');
+    expect(rows[2].hostname).toBe('mbp.local');
+  });
+
+  it('collectLocal stamps a stable hostname from config without overwriting sentinels', async () => {
+    writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ hostname: 'test-host' }) + '\n');
+    const { collectLocal } = await import('./dump.mjs');
+    const { buckets, sessions } = await collectLocal();
+
+    const chatgptBuckets = buckets.filter((b) => b.source === 'chatgpt-web');
+    const chatgptSessions = sessions.filter((s) => s.source === 'chatgpt-web');
+    expect(chatgptBuckets.length).toBeGreaterThan(0);
+    expect(chatgptBuckets.every((b) => b.hostname === 'test-host')).toBe(true);
+    expect(chatgptSessions.every((s) => s.hostname === 'test-host')).toBe(true);
+  });
+
   it('resolveAiUsageHome defaults to ~/.ai-usage', async () => {
     const { resolveAiUsageHome } = await import('./dump.mjs');
     const prevHome = process.env.AI_USAGE_HOME;

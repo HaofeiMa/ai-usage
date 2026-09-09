@@ -11,7 +11,7 @@ function hasValue(value: string | undefined): boolean {
 
 function allowed(selected: string[] | undefined, value: string | undefined): boolean {
   if (!selected || selected.length === 0) return true;
-  if (!hasValue(value)) return true;
+  if (!hasValue(value)) return false;
   return selected.includes(value as string);
 }
 

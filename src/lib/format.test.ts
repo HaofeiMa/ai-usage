@@ -20,9 +20,15 @@ describe('formatCompactTokens', () => {
 
 describe('formatDuration', () => {
   it('formats hours and minutes in Chinese units', () => {
-    expect(formatDuration(0)).toBe('0分钟');
     expect(formatDuration(90)).toBe('1分钟');
     expect(formatDuration(3600)).toBe('1小时');
     expect(formatDuration(5400)).toBe('1小时30分钟');
+  });
+
+  it('formats sub-minute durations in seconds', () => {
+    expect(formatDuration(0)).toBe('0秒');
+    expect(formatDuration(1)).toBe('1秒');
+    expect(formatDuration(45)).toBe('45秒');
+    expect(formatDuration(59)).toBe('59秒');
   });
 });
