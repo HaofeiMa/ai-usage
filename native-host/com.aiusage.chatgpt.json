@@ -1,0 +1,9 @@
+{
+  "name": "com.aiusage.chatgpt",
+  "description": "AI Usage ChatGPT web workload jsonl writer",
+  "path": "HOST_PATH",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://REPLACE_WITH_EXTENSION_ID/"
+  ]
+}

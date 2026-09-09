@@ -13,6 +13,8 @@ test('manifest includes self-healing active-tab injection permissions', () => {
   assert.ok(manifest.permissions.includes('storage'));
   assert.ok(manifest.permissions.includes('activeTab'));
   assert.ok(manifest.permissions.includes('scripting'));
+  assert.ok(manifest.permissions.includes('nativeMessaging'));
+  assert.equal(manifest.background.service_worker, 'background.js');
   assert.ok(manifest.host_permissions.includes('https://chatgpt.com/*'));
   assert.equal(manifest.content_scripts[0].world, 'ISOLATED');
   assert.equal(manifest.content_scripts[1].world, 'MAIN');
@@ -32,6 +34,17 @@ test('bridge and page hook are idempotent across repeated popup opens', () => {
   assert.match(read('bridge.js'), /__CWP_BRIDGE_INSTALLED__/);
   assert.match(read('page-hook.js'), /__CWP_PAGE_HOOK__/);
   assert.match(read('page-hook.js'), /popup-reinject/);
+});
+
+test('bridge forwards jsonl records to background native host queue', () => {
+  const bridge = read('bridge.js');
+  const background = read('background.js');
+  assert.match(bridge, /recordsFromSnapshot/);
+  assert.match(bridge, /type: 'native-records'/);
+  assert.match(background, /HOST_NAME = 'com\.aiusage\.chatgpt'/);
+  assert.match(background, /connectNative\(HOST_NAME\)/);
+  assert.match(background, /queue\.push\(records\)/);
+  assert.match(background, /flushQueue/);
 });
 
 test('v0.4 popup exposes final replies and model steps separately', () => {

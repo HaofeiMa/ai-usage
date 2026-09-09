@@ -51,6 +51,8 @@
     if (!snapshot) return;
     const profile = core.profileConversation(snapshot);
 
+    const records = core.recordsFromSnapshot(snapshot);
+
     updateStorage(state => {
       const snapshots = core.sanitizeSnapshots(state.snapshots || {});
       snapshots[snapshot.id] = core.sanitizeSnapshot(snapshot);
@@ -68,5 +70,11 @@
         }
       };
     });
+
+    if (records.length > 0) {
+      chrome.runtime.sendMessage({ type: 'native-records', records }).catch(err => {
+        console.debug('[ChatGPT Workload Probe] native records dispatch failed', err);
+      });
+    }
   });
 })();
