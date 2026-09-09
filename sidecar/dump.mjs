@@ -1,9 +1,24 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, hostname as osHostname } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const VIBE_USAGE_SRC = fileURLToPath(new URL('../../vibe-usage-chatgpt-web/src/', import.meta.url));
+export function defaultRepoRoot() {
+  return fileURLToPath(new URL('..', import.meta.url));
+}
+
+export function resolveVibeUsageSrc(env = process.env, repoRoot = defaultRepoRoot()) {
+  const override = typeof env.AI_USAGE_VIBE_USAGE_SRC === 'string' ? env.AI_USAGE_VIBE_USAGE_SRC.trim() : '';
+  if (override) return override;
+  const candidates = [
+    join(repoRoot, '../vibe-usage-chatgpt-web/src'),
+    join(repoRoot, '../vibe-usage/src'),
+  ];
+  for (const dir of candidates) {
+    if (existsSync(join(dir, 'parsers/index.js'))) return dir;
+  }
+  return candidates[0];
+}
 
 export function resolveAiUsageHome(env = process.env) {
   const override = env.AI_USAGE_HOME?.trim();
@@ -15,6 +30,7 @@ export function applyAiUsageEnv(aiUsageHome) {
   process.env.AI_USAGE_HOME = home;
   process.env.VIBE_USAGE_CONFIG_DIR = home;
   process.env.VIBE_USAGE_STATE_DIR = home;
+  process.env.VIBE_USAGE_CACHE_DIR = join(home, 'cache');
   return home;
 }
 
@@ -29,11 +45,37 @@ export function stripText(value) {
   return out;
 }
 
+export function mergeSnapshotBySource(previous, collected) {
+  const succeeded = new Set(collected.succeededSources || []);
+  const prevBuckets = Array.isArray(previous?.buckets) ? previous.buckets : [];
+  const prevSessions = Array.isArray(previous?.sessions) ? previous.sessions : [];
+  return {
+    buckets: [
+      ...(collected.buckets || []),
+      ...prevBuckets.filter((item) => !succeeded.has(item?.source)),
+    ],
+    sessions: [
+      ...(collected.sessions || []),
+      ...prevSessions.filter((item) => !succeeded.has(item?.source)),
+    ],
+    syncedAt: collected.syncedAt,
+  };
+}
+
+function readSnapshot(home) {
+  try {
+    return JSON.parse(readFileSync(join(home, 'snapshot.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 async function loadVibeUsageModules() {
-  const parsersMod = await import(pathToFileURL(join(VIBE_USAGE_SRC, 'parsers/index.js')).href);
-  const contractMod = await import(pathToFileURL(join(VIBE_USAGE_SRC, 'parsers/contract.js')).href);
-  const configMod = await import(pathToFileURL(join(VIBE_USAGE_SRC, 'config.js')).href);
-  const apiMod = await import(pathToFileURL(join(VIBE_USAGE_SRC, 'api.js')).href);
+  const vibeUsageSrc = resolveVibeUsageSrc();
+  const parsersMod = await import(pathToFileURL(join(vibeUsageSrc, 'parsers/index.js')).href);
+  const contractMod = await import(pathToFileURL(join(vibeUsageSrc, 'parsers/contract.js')).href);
+  const configMod = await import(pathToFileURL(join(vibeUsageSrc, 'config.js')).href);
+  const apiMod = await import(pathToFileURL(join(vibeUsageSrc, 'api.js')).href);
   return {
     parsers: parsersMod.parsers,
     normalizeParserResult: contractMod.normalizeParserResult,
@@ -63,6 +105,7 @@ export async function collectLocal({ aiUsageHome } = {}) {
 
   const buckets = [];
   const sessions = [];
+  const succeededSources = [];
 
   for (const [source, parse] of Object.entries(parsers)) {
     let result;
@@ -81,6 +124,9 @@ export async function collectLocal({ aiUsageHome } = {}) {
       continue;
     }
 
+    if (normalized.skipped) continue;
+
+    succeededSources.push(source);
     if (normalized.buckets.length > 0) buckets.push(...normalized.buckets);
     if (normalized.sessions.length > 0) sessions.push(...normalized.sessions);
   }
@@ -99,6 +145,7 @@ export async function collectLocal({ aiUsageHome } = {}) {
     buckets: stripText(buckets),
     sessions: stripText(sessions),
     syncedAt,
+    succeededSources,
   };
 }
 
@@ -115,7 +162,8 @@ async function maybeIngest(buckets, sessions) {
 
 export async function dumpSnapshot({ aiUsageHome } = {}) {
   const home = applyAiUsageEnv(aiUsageHome);
-  const snapshot = await collectLocal({ aiUsageHome: home });
+  const collected = await collectLocal({ aiUsageHome: home });
+  const snapshot = mergeSnapshotBySource(readSnapshot(home), collected);
   const snapshotPath = join(home, 'snapshot.json');
 
   mkdirSync(home, { recursive: true });

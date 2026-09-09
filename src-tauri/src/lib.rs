@@ -22,6 +22,7 @@ const DUMP_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
 struct AppState {
     last_error: Mutex<Option<String>>,
+    dump_busy: Mutex<()>,
 }
 
 #[derive(Serialize)]
@@ -129,6 +130,11 @@ fn unix_path() -> String {
     format!("/opt/homebrew/bin:/usr/local/bin:{current}")
 }
 
+fn try_with_dump_lock<R>(lock: &Mutex<()>, f: impl FnOnce() -> R) -> Option<R> {
+    let _guard = lock.try_lock().ok()?;
+    Some(f())
+}
+
 fn run_dump() -> Result<(), String> {
     let home = ai_usage_home();
     fs::create_dir_all(&home).map_err(|e| e.to_string())?;
@@ -161,6 +167,18 @@ fn run_dump() -> Result<(), String> {
             format!("sidecar 退出码 {:?}", output.status.code())
         };
         Err(msg)
+    }
+}
+
+fn run_dump_exclusive(app: &AppHandle) -> Result<bool, String> {
+    let Some(state) = app.try_state::<AppState>() else {
+        run_dump()?;
+        return Ok(true);
+    };
+    match try_with_dump_lock(&state.dump_busy, run_dump) {
+        None => Ok(false),
+        Some(Ok(())) => Ok(true),
+        Some(Err(err)) => Err(err),
     }
 }
 
@@ -215,8 +233,9 @@ fn set_error(app: &AppHandle, error: Option<String>) {
 }
 
 fn refresh_and_notify(app: &AppHandle) {
-    match run_dump() {
-        Ok(()) => set_error(app, None),
+    match run_dump_exclusive(app) {
+        Ok(false) => return,
+        Ok(true) => set_error(app, None),
         Err(err) => set_error(app, Some(err)),
     }
     update_tray_title(app);
@@ -288,11 +307,13 @@ fn get_state(app: AppHandle) -> DashboardState {
 
 #[tauri::command]
 async fn refresh_data(app: AppHandle) -> Result<DashboardState, String> {
-    let result = tauri::async_runtime::spawn_blocking(run_dump)
+    let handle = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || run_dump_exclusive(&handle))
         .await
         .map_err(|e| e.to_string())?;
     match result {
-        Ok(()) => set_error(&app, None),
+        Ok(false) => return Ok(dashboard_payload(&app)),
+        Ok(true) => set_error(&app, None),
         Err(err) => {
             set_error(&app, Some(err.clone()));
             update_tray_title(&app);
@@ -378,6 +399,7 @@ pub fn run() {
         ))
         .manage(AppState {
             last_error: Mutex::new(None),
+            dump_busy: Mutex::new(()),
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
@@ -428,4 +450,22 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod dump_lock_tests {
+    use super::*;
+
+    #[test]
+    fn overlapping_dump_lock_skips() {
+        let lock = Mutex::new(());
+        let _hold = lock.lock().unwrap();
+        assert!(try_with_dump_lock(&lock, || ()).is_none());
+    }
+
+    #[test]
+    fn dump_lock_runs_when_free() {
+        let lock = Mutex::new(());
+        assert_eq!(try_with_dump_lock(&lock, || 7), Some(7));
+    }
 }

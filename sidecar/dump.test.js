@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 
@@ -59,7 +59,15 @@ describe('sidecar dump', () => {
       ].join('\n') + '\n',
     );
 
-    for (const key of ['HOME', 'AI_USAGE_HOME', 'VIBE_USAGE_CONFIG_DIR', 'VIBE_USAGE_STATE_DIR', 'VIBE_USAGE_CHATGPT_WEB_LOG']) {
+    for (const key of [
+      'HOME',
+      'AI_USAGE_HOME',
+      'VIBE_USAGE_CONFIG_DIR',
+      'VIBE_USAGE_STATE_DIR',
+      'VIBE_USAGE_CACHE_DIR',
+      'VIBE_USAGE_CHATGPT_WEB_LOG',
+      'AI_USAGE_VIBE_USAGE_SRC',
+    ]) {
       prev[key] = process.env[key];
     }
     process.env.HOME = tmpHome;
@@ -139,6 +147,125 @@ describe('sidecar dump', () => {
     } finally {
       if (prevHome === undefined) delete process.env.AI_USAGE_HOME;
       else process.env.AI_USAGE_HOME = prevHome;
+    }
+  });
+
+  it('applyAiUsageEnv sets VIBE_USAGE_CACHE_DIR to home/cache', async () => {
+    const { applyAiUsageEnv } = await import('./dump.mjs');
+    applyAiUsageEnv(tmpHome);
+    expect(process.env.VIBE_USAGE_CACHE_DIR).toBe(join(tmpHome, 'cache'));
+    expect(process.env.VIBE_USAGE_CONFIG_DIR).toBe(tmpHome);
+    expect(process.env.VIBE_USAGE_STATE_DIR).toBe(tmpHome);
+  });
+
+  it('mergeSnapshotBySource keeps skipped sources and replaces succeeded ones', async () => {
+    const { mergeSnapshotBySource } = await import('./dump.mjs');
+    const previous = {
+      buckets: [
+        { source: 'cursor', inputTokens: 10 },
+        { source: 'chatgpt-web', inputTokens: 1 },
+      ],
+      sessions: [
+        { source: 'cursor', durationSeconds: 60 },
+        { source: 'chatgpt-web', durationSeconds: 5 },
+      ],
+      syncedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const collected = {
+      buckets: [{ source: 'chatgpt-web', inputTokens: 99 }],
+      sessions: [{ source: 'chatgpt-web', durationSeconds: 9 }],
+      succeededSources: ['chatgpt-web'],
+      syncedAt: '2026-09-09T00:00:00.000Z',
+    };
+    const merged = mergeSnapshotBySource(previous, collected);
+    expect(merged.syncedAt).toBe('2026-09-09T00:00:00.000Z');
+    expect(merged.buckets).toEqual([
+      { source: 'chatgpt-web', inputTokens: 99 },
+      { source: 'cursor', inputTokens: 10 },
+    ]);
+    expect(merged.sessions).toEqual([
+      { source: 'chatgpt-web', durationSeconds: 9 },
+      { source: 'cursor', durationSeconds: 60 },
+    ]);
+  });
+
+  it('mergeSnapshotBySource drops a succeeded source that emitted nothing', async () => {
+    const { mergeSnapshotBySource } = await import('./dump.mjs');
+    const previous = {
+      buckets: [
+        { source: 'cursor', inputTokens: 10 },
+        { source: 'codex', inputTokens: 3 },
+      ],
+      sessions: [{ source: 'cursor', durationSeconds: 8 }],
+      syncedAt: 'old',
+    };
+    const collected = {
+      buckets: [{ source: 'codex', inputTokens: 4 }],
+      sessions: [],
+      succeededSources: ['cursor', 'codex'],
+      syncedAt: 'new',
+    };
+    const merged = mergeSnapshotBySource(previous, collected);
+    expect(merged.buckets).toEqual([{ source: 'codex', inputTokens: 4 }]);
+    expect(merged.sessions).toEqual([]);
+    expect(merged.syncedAt).toBe('new');
+  });
+
+  it('dumpSnapshot keeps history for sources that did not succeed this run', async () => {
+    writeFileSync(
+      join(tmpHome, 'snapshot.json'),
+      JSON.stringify({
+        buckets: [
+          { source: '__kept__', inputTokens: 42 },
+          { source: 'chatgpt-web', inputTokens: 999999 },
+        ],
+        sessions: [
+          { source: '__kept__', durationSeconds: 12 },
+          { source: 'chatgpt-web', durationSeconds: 999 },
+        ],
+        syncedAt: '2020-01-01T00:00:00.000Z',
+      }) + '\n',
+    );
+
+    const { dumpSnapshot } = await import('./dump.mjs');
+    await dumpSnapshot();
+
+    const snapshot = JSON.parse(readFileSync(join(tmpHome, 'snapshot.json'), 'utf8'));
+    const chatgptInput = snapshot.buckets
+      .filter((b) => b.source === 'chatgpt-web')
+      .reduce((sum, b) => sum + b.inputTokens, 0);
+    expect(chatgptInput).toBe(40);
+    expect(snapshot.buckets.some((b) => b.source === '__kept__' && b.inputTokens === 42)).toBe(true);
+    expect(snapshot.sessions.some((s) => s.source === '__kept__' && s.durationSeconds === 12)).toBe(true);
+    expect(snapshot.sessions.some((s) => s.source === 'chatgpt-web' && s.durationSeconds === 999)).toBe(
+      false,
+    );
+  });
+
+  it('resolveVibeUsageSrc prefers AI_USAGE_VIBE_USAGE_SRC', async () => {
+    const { resolveVibeUsageSrc } = await import('./dump.mjs');
+    expect(resolveVibeUsageSrc({ AI_USAGE_VIBE_USAGE_SRC: '/custom/src' }, '/unused')).toBe(
+      '/custom/src',
+    );
+  });
+
+  it('resolveVibeUsageSrc tries chatgpt-web checkout then vibe-usage', async () => {
+    const { resolveVibeUsageSrc } = await import('./dump.mjs');
+    const root = mkdtempSync(join(tmpdir(), 'ai-usage-vu-src-'));
+    const repoRoot = join(root, 'ai-usage');
+    mkdirSync(repoRoot);
+    try {
+      expect(resolveVibeUsageSrc({}, repoRoot)).toBe(join(root, 'vibe-usage-chatgpt-web', 'src'));
+
+      mkdirSync(join(root, 'vibe-usage', 'src', 'parsers'), { recursive: true });
+      writeFileSync(join(root, 'vibe-usage', 'src', 'parsers', 'index.js'), 'export {}\n');
+      expect(resolveVibeUsageSrc({}, repoRoot)).toBe(join(root, 'vibe-usage', 'src'));
+
+      mkdirSync(join(root, 'vibe-usage-chatgpt-web', 'src', 'parsers'), { recursive: true });
+      writeFileSync(join(root, 'vibe-usage-chatgpt-web', 'src', 'parsers', 'index.js'), 'export {}\n');
+      expect(resolveVibeUsageSrc({}, repoRoot)).toBe(join(root, 'vibe-usage-chatgpt-web', 'src'));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

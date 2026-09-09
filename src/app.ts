@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
+import { enable, disable } from '@tauri-apps/plugin-autostart';
 import { filterBuckets, filterSessions, summaryCards, type View } from './lib/usage.js';
 import {
   filterBucketsByTime,
@@ -9,7 +9,7 @@ import {
   usesHourlyTrend,
   type TimeRangeId,
 } from './lib/time-range.js';
-import { filterByFacets, uniqueValues } from './lib/facets.js';
+import { filterByFacets, filterSessionsByFacets, uniqueValues } from './lib/facets.js';
 import { distribution, tokenTrend } from './lib/charts.js';
 import { formatCompactTokens, formatDuration } from './lib/format.js';
 
@@ -129,6 +129,20 @@ function stackedBars(
   return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">${bars}</svg>`;
 }
 
+function nativeMessagingHelp(): string {
+  return `
+      <p>扩展还需要 Native Messaging host（Chrome 要求 <code>path</code> 指向可执行脚本）：</p>
+      <ol>
+        <li>复制仓库里的 <code>native-host/com.aiusage.chatgpt.json</code> 到浏览器的 NativeMessagingHosts 目录</li>
+        <li>把清单里的 <code>path</code> 改成 <code>native-host/host.mjs</code> 的绝对路径（脚本带 <code>#!/usr/bin/env node</code>，需可执行）</li>
+        <li>把 <code>allowed_origins</code> 中的 <code>REPLACE_WITH_EXTENSION_ID</code> 换成扩展 ID（<code>chrome://extensions</code>）</li>
+      </ol>
+      <p>macOS Chrome：<code>~/Library/Application Support/Google/Chrome/NativeMessagingHosts/</code></p>
+      <p>macOS Edge：<code>~/Library/Application Support/Microsoft Edge/NativeMessagingHosts/</code></p>
+      <p>Linux Chrome：<code>~/.config/google-chrome/NativeMessagingHosts/</code></p>
+  `;
+}
+
 function extensionInstallHelp(): string {
   return `
     <section class="settings">
@@ -141,6 +155,7 @@ function extensionInstallHelp(): string {
         <li>选择「加载已解压的扩展程序」，指向上面的 <code>extension/</code> 目录</li>
         <li>打开并刷新 chatgpt.com，之后用量会写入本机 jsonl</li>
       </ol>
+      ${nativeMessagingHelp()}
     </section>
   `;
 }
@@ -179,7 +194,7 @@ function sliceData(snapshot: Snapshot) {
   return {
     optionBuckets: timedBuckets,
     buckets: filterByFacets(timedBuckets, facets),
-    sessions: filterByFacets(timedSessions, facets),
+    sessions: filterSessionsByFacets(timedSessions, facets),
   };
 }
 
@@ -262,6 +277,7 @@ function render(root: HTMLElement) {
             <li>选择「加载已解压的扩展程序」，指向上面的 <code>extension/</code> 目录</li>
             <li>打开并刷新 chatgpt.com，之后用量会写入本机 jsonl</li>
           </ol>
+          ${nativeMessagingHelp()}
           <label class="toggle" style="margin:12px 0 0;margin-left:0">
             <input id="autostart-toggle" type="checkbox" ${autostartOn ? 'checked' : ''} />
             开机自动启动
@@ -324,8 +340,9 @@ function bind(root: HTMLElement) {
       if (autostartOn) await enable();
       else await disable();
     } catch {
-      await persistConfig({ autostart: autostartOn });
+      // OS hook failed; still persist the user's intent.
     }
+    await persistConfig({ autostart: autostartOn });
   });
   root.querySelector('#refresh-btn')?.addEventListener('click', () => void refresh());
   root.querySelector('#quit-btn')?.addEventListener('click', () => {
@@ -353,11 +370,6 @@ function applyRemote() {
 async function load() {
   remote = await invoke<DashboardState>('get_state');
   applyRemote();
-  try {
-    autostartOn = await isEnabled();
-  } catch {
-    autostartOn = true;
-  }
   if (remote.missingSnapshot) settingsOpen = true;
   const root = document.querySelector<HTMLElement>('#app');
   if (root) render(root);

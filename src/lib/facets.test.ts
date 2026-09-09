@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterByFacets } from './facets.js';
+import { filterByFacets, filterSessionsByFacets } from './facets.js';
 import { tokenTrend, distribution, type TrendGranularity } from './charts.js';
 import { computedTotal } from './usage.js';
 
@@ -37,6 +37,39 @@ describe('filterByFacets', () => {
     expect(filterByFacets([session, matching], { hostnames: ['mbp'], models: ['gpt-5'] })).toEqual([
       matching,
     ]);
+  });
+});
+
+describe('filterSessionsByFacets', () => {
+  it('does not drop sessions that omit model when a model facet is selected', () => {
+    const session = {
+      source: 'cursor',
+      hostname: 'mbp',
+      project: 'ai-usage',
+      durationSeconds: 90,
+      activeSeconds: 40,
+    };
+    expect(
+      filterSessionsByFacets([session], {
+        hostnames: ['mbp'],
+        sources: ['cursor'],
+        models: ['gpt-5'],
+        projects: ['ai-usage'],
+      }),
+    ).toEqual([session]);
+  });
+
+  it('still filters sessions by hostname, source, and project', () => {
+    const keep = { source: 'cursor', hostname: 'mbp', project: 'ai-usage', durationSeconds: 90 };
+    const otherHost = { source: 'cursor', hostname: 'linux', project: 'ai-usage', durationSeconds: 30 };
+    const otherProject = { source: 'cursor', hostname: 'mbp', project: 'other', durationSeconds: 15 };
+    expect(
+      filterSessionsByFacets([keep, otherHost, otherProject], {
+        hostnames: ['mbp'],
+        models: ['gpt-5'],
+        projects: ['ai-usage'],
+      }),
+    ).toEqual([keep]);
   });
 });
 

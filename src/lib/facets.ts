@@ -32,6 +32,18 @@ export function filterByFacets<
   );
 }
 
+export function filterSessionsByFacets<
+  T extends {
+    hostname?: string;
+    source: string;
+    model?: string;
+    project?: string;
+  },
+>(items: T[], facets: FacetFilters): T[] {
+  const { models: _models, ...rest } = facets;
+  return filterByFacets(items, rest);
+}
+
 export function uniqueValues<T>(items: T[], key: keyof T): string[] {
   const seen = new Set<string>();
   for (const item of items) {

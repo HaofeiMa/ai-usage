@@ -32,4 +32,4 @@ npm run tauri build  # 本地打包
 
 闲时只有托盘进程。关闭仪表盘会销毁 WebView，不会退出应用。退出请用托盘菜单或仪表盘页脚「退出」。
 
-本机数据目录：`~/.ai-usage/`。托盘每 30 分钟（以及点「更新数据」时）会 spawn 系统 `node sidecar/dump.mjs` 写入 `snapshot.json` 后退出。v1 使用 PATH / Homebrew 上的 Node，不内置 Node 运行时。
+本机数据目录：`~/.ai-usage/`（Codex 解析缓存为 `~/.ai-usage/cache`，由 sidecar 设置 `VIBE_USAGE_CACHE_DIR`）。托盘每 30 分钟（以及点「更新数据」时）会 spawn 系统 `node sidecar/dump.mjs` 写入 `snapshot.json` 后退出。解析器根目录优先用环境变量 `AI_USAGE_VIBE_USAGE_SRC`，否则依次尝试仓库旁的 `../vibe-usage-chatgpt-web/src` 与 `../vibe-usage/src`。v1 使用 PATH / Homebrew 上的 Node，不内置 Node 运行时。
