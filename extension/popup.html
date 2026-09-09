@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Usage · ChatGPT</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>AI Usage · ChatGPT</h1>
+        <p id="dateLabel">Today</p>
+      </div>
+      <span id="status" class="status">No data yet</span>
+    </header>
+
+    <section class="grid metrics">
+      <article><span>Prompts</span><strong id="prompts">0</strong></article>
+      <article><span>Final replies</span><strong id="replies">0</strong></article>
+      <article><span>Model steps</span><strong id="modelSteps">0</strong></article>
+      <article><span>Conversations</span><strong id="conversations">0</strong></article>
+      <article class="wide"><span>Thinking</span><strong id="thinking">0s</strong></article>
+    </section>
+
+    <p id="legacyWarning" class="warning" hidden></p>
+
+    <section class="panel">
+      <div class="panel-title"><h2>Estimated tokens</h2><span class="badge">estimate</span></div>
+      <div class="token-row"><span>Visible user text</span><strong id="userTokens">0</strong></div>
+      <div class="token-row"><span>Visible assistant text</span><strong id="assistantTokens">0</strong></div>
+      <div class="token-row emphasis"><span>Visible context processed</span><strong id="contextTokens">0</strong></div>
+      <p class="hint">Historical visible context can contribute when you continue an old chat today. It is sampled once per final reply, not once per internal model step. Hidden system/tool context, cached tokens, and hidden reasoning tokens are excluded.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Models observed</h2>
+      <div class="model-group">
+        <span class="model-label">Final replies</span>
+        <div id="replyModels" class="models empty">No final-reply model metadata observed today.</div>
+      </div>
+      <div class="model-group">
+        <span class="model-label">Model steps</span>
+        <div id="stepModels" class="models empty">No model-step metadata observed today.</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Recent conversations</h2>
+      <div id="recent" class="recent empty">Open or continue a ChatGPT conversation to collect data.</div>
+    </section>
+
+    <details class="panel debug">
+      <summary>Debug</summary>
+      <pre id="debugText">No observer events yet.</pre>
+      <button id="resetBtn" type="button">Reset local data</button>
+    </details>
+  </main>
+  <script src="core.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
