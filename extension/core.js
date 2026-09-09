@@ -109,6 +109,30 @@
     };
   }
 
+  function stripMessageText(message) {
+    if (!message || typeof message !== 'object') return message;
+    if (!('text' in message)) return message;
+    const { text: _text, ...rest } = message;
+    return rest;
+  }
+
+  function sanitizeSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return snapshot;
+    if (!Array.isArray(snapshot.messages)) return snapshot;
+    return {
+      ...snapshot,
+      messages: snapshot.messages.map(stripMessageText)
+    };
+  }
+
+  function sanitizeSnapshots(snapshots) {
+    const out = {};
+    for (const [id, snapshot] of Object.entries(snapshots || {})) {
+      out[id] = sanitizeSnapshot(snapshot);
+    }
+    return out;
+  }
+
   function normalizeConversation(payload, observedAtMs) {
     if (!payload || typeof payload !== 'object') return null;
     const nowSec = (observedAtMs || Date.now()) / 1000;
@@ -136,7 +160,7 @@
     }
     const id = payload.id || payload.conversation_id || null;
     if (!id) return null;
-    return {
+    return sanitizeSnapshot({
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       id,
       title: payload.title || 'Untitled conversation',
@@ -145,7 +169,7 @@
       currentNode: payload.current_node || null,
       messages,
       observedAt: nowSec
-    };
+    });
   }
 
   function increment(map, key) {
@@ -272,16 +296,19 @@
   }
 
   function recordsFromSnapshot(snapshot) {
-    if (!snapshot || !Array.isArray(snapshot.messages)) return [];
-    const conversationId = snapshot.id;
+    const cleaned = sanitizeSnapshot(snapshot);
+    if (!cleaned || !Array.isArray(cleaned.messages)) return [];
+    const conversationId = cleaned.id;
     let cumulativeVisible = 0;
     const records = [];
-    for (const m of snapshot.messages) {
+    for (const m of cleaned.messages) {
+      const createTime = finiteTimestamp(m.createTime, m.create_time);
+      if (createTime === null) continue;
       const tok = Number(m.estimatedTokens) || 0;
       const record = {
         message_id: m.id,
         conversation_id: conversationId,
-        create_time: m.createTime,
+        create_time: createTime,
         role: m.role,
         isVisibleUser: Boolean(m.isVisibleUser),
         isVisibleAssistant: Boolean(m.isVisibleAssistant),
@@ -310,6 +337,8 @@
     getThinkingSeconds,
     getModel,
     normalizeConversation,
+    sanitizeSnapshot,
+    sanitizeSnapshots,
     profileConversation,
     aggregateForRange,
     recordsFromSnapshot

@@ -271,6 +271,48 @@ test('recordsFromSnapshot emits parser jsonl fields without text', () => {
   assert.equal(assistant.estimated_context_input_tokens, user.estimated_tokens);
 });
 
+test('recordsFromSnapshot strips legacy text and never leaks secret bodies', () => {
+  const dayStart = Date.UTC(2026, 8, 8) / 1000;
+  const legacySnapshot = {
+    id: 'c-legacy', schemaVersion: 2, title: 'Legacy', updatedAt: dayStart + 100,
+    messages: [
+      { id: 'u1', role: 'user', text: 'SECRET', createTime: dayStart + 10, estimatedTokens: 2, thinkingSeconds: 0, model: null, isVisibleUser: true, isVisibleAssistant: false, isFinalReply: false, isModelStep: false },
+      { id: 'a1', role: 'assistant', text: 'SECRET REPLY', createTime: dayStart + 20, estimatedTokens: 3, thinkingSeconds: 0, model: 'gpt-test', isVisibleUser: false, isVisibleAssistant: true, isFinalReply: true, isModelStep: true },
+    ]
+  };
+  const records = core.recordsFromSnapshot(legacySnapshot);
+  assert.equal(records.length, 2);
+  for (const r of records) assert.equal('text' in r, false);
+  const blob = JSON.stringify(records);
+  assert.doesNotMatch(blob, /SECRET/);
+});
+
+test('recordsFromSnapshot omits messages without create_time', () => {
+  const dayStart = Date.UTC(2026, 8, 8) / 1000;
+  const snapshot = {
+    id: 'c-mixed', schemaVersion: 2, title: 'Mixed', updatedAt: dayStart + 100,
+    messages: [
+      { id: 'undated', role: 'user', createTime: null, estimatedTokens: 10, thinkingSeconds: 0, model: null, isVisibleUser: true, isVisibleAssistant: false, isFinalReply: false, isModelStep: false },
+      { id: 'dated', role: 'user', createTime: dayStart + 10, estimatedTokens: 2, thinkingSeconds: 0, model: null, isVisibleUser: true, isVisibleAssistant: false, isFinalReply: false, isModelStep: false },
+    ]
+  };
+  const records = core.recordsFromSnapshot(snapshot);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].message_id, 'dated');
+  assert.equal(records[0].create_time, dayStart + 10);
+});
+
+test('sanitizeSnapshot strips text from legacy stored messages', () => {
+  const snap = {
+    id: 'c-old', schemaVersion: 2, title: 'Old', messages: [
+      { id: 'm1', role: 'user', text: 'SECRET', estimatedTokens: 5 }
+    ]
+  };
+  const out = core.sanitizeSnapshot(snap);
+  assert.equal('text' in out.messages[0], false);
+  assert.equal(out.messages[0].estimatedTokens, 5);
+});
+
 test('message update_time alone does not turn old undated content into today activity', () => {
   const dayStart = Date.UTC(2026, 8, 8) / 1000;
   const mapping = {

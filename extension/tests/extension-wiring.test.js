@@ -46,5 +46,6 @@ test('v0.4 popup exposes final replies and model steps separately', () => {
   assert.match(popup, /stats\.replyModels/);
   assert.match(popup, /stats\.stepModels/);
   assert.match(read('bridge.js'), /profileConversation/);
+  assert.match(read('bridge.js'), /sanitizeSnapshot/);
   assert.doesNotMatch(popup, /stats\.models/);
 });

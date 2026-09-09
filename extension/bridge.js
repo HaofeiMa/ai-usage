@@ -52,8 +52,8 @@
     const profile = core.profileConversation(snapshot);
 
     updateStorage(state => {
-      const snapshots = state.snapshots || {};
-      snapshots[snapshot.id] = snapshot;
+      const snapshots = core.sanitizeSnapshots(state.snapshots || {});
+      snapshots[snapshot.id] = core.sanitizeSnapshot(snapshot);
       return {
         snapshots,
         debug: {
