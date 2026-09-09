@@ -9,7 +9,8 @@ import {
   resolveLogPath,
   parseMessagesFromBuffer,
   appendRecords,
-  recordsFromMessage
+  recordsFromMessage,
+  processBufferChunk
 } from './host.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -159,6 +160,52 @@ test('appendRecords uses append mode without truncating existing file', async ()
     assert.equal(lines.length, 2);
     assert.equal(JSON.parse(lines[0]).message_id, 'existing');
     assert.equal(JSON.parse(lines[1]).message_id, 'new');
+  });
+});
+
+test('processBufferChunk appends a complete frame without waiting for more input', async () => {
+  await withTempLog(async logPath => {
+    const frame = frameJson([{ message_id: 'instant' }]);
+    const remainder = await processBufferChunk(Buffer.alloc(0), frame, logPath);
+    assert.equal(remainder.length, 0);
+    const lines = (await fs.readFile(logPath, 'utf8')).trim().split('\n');
+    assert.equal(lines.length, 1);
+    assert.equal(JSON.parse(lines[0]).message_id, 'instant');
+  });
+});
+
+test('processBufferChunk holds a trailing partial frame until more bytes arrive', async () => {
+  await withTempLog(async logPath => {
+    const frame = frameJson([{ message_id: 'split' }]);
+    const splitAt = Math.floor(frame.length / 2);
+    const part1 = frame.subarray(0, splitAt);
+    const part2 = frame.subarray(splitAt);
+
+    let leftover = await processBufferChunk(Buffer.alloc(0), part1, logPath);
+    assert.equal(leftover.length, part1.length);
+    await assert.rejects(() => fs.readFile(logPath, 'utf8'), /ENOENT/);
+
+    leftover = await processBufferChunk(leftover, part2, logPath);
+    assert.equal(leftover.length, 0);
+    const lines = (await fs.readFile(logPath, 'utf8')).trim().split('\n');
+    assert.equal(lines.length, 1);
+    assert.equal(JSON.parse(lines[0]).message_id, 'split');
+  });
+});
+
+test('processBufferChunk appends first complete frame while holding incomplete second', async () => {
+  await withTempLog(async logPath => {
+    const frame1 = frameJson([{ message_id: 'first' }]);
+    const frame2 = frameJson([{ message_id: 'second' }]);
+    const partial2 = frame2.subarray(0, frame2.length - 3);
+    const combined = Buffer.concat([frame1, partial2]);
+
+    const leftover = await processBufferChunk(Buffer.alloc(0), combined, logPath);
+    assert.equal(leftover.length, partial2.length);
+
+    const lines = (await fs.readFile(logPath, 'utf8')).trim().split('\n');
+    assert.equal(lines.length, 1);
+    assert.equal(JSON.parse(lines[0]).message_id, 'first');
   });
 });
 

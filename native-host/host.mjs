@@ -60,16 +60,21 @@ export async function appendRecords(records, logPath) {
   }
 }
 
-async function runHost() {
-  const chunks = [];
-  for await (const chunk of process.stdin) chunks.push(chunk);
-  const buffer = Buffer.concat(chunks);
-  const { messages } = parseMessagesFromBuffer(buffer);
-  const logPath = resolveLogPath();
-
+export async function processBufferChunk(leftover, chunk, logPath) {
+  const buffer = Buffer.concat([leftover, chunk]);
+  const { messages, remainder } = parseMessagesFromBuffer(buffer);
   for (const message of messages) {
     const records = recordsFromMessage(message);
     if (records) await appendRecords(records, logPath);
+  }
+  return remainder;
+}
+
+async function runHost() {
+  const logPath = resolveLogPath();
+  let leftover = Buffer.alloc(0);
+  for await (const chunk of process.stdin) {
+    leftover = await processBufferChunk(leftover, chunk, logPath);
   }
 }
 
