@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { loadConfig } from '../config.js';
 import { aggregateToBuckets } from './aggregate.js';
+import { projectFromCwd } from './fs-utils.js';
 import { queryDbJsonSnapshotOnLock, sqliteUnavailableError, isSqliteUnavailableError } from './sqlite.js';
 
 export const CURSOR_CLOUD_HOSTNAME = 'cursor-cloud';
@@ -261,7 +262,7 @@ export function entriesFromDeviceLog(text) {
     const entry = {
       source: 'cursor',
       model,
-      project: 'unknown',
+      project: projectFromCwd(typeof rec.project === 'string' ? rec.project : undefined),
       timestamp,
       inputTokens,
       outputTokens: output,
