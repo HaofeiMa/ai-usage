@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EXTENSION_ID, installNativeHost, NATIVE_HOST_NAME } from './install-native-host.mjs';
 
@@ -15,7 +15,7 @@ describe('installNativeHost', () => {
         env: {
           AI_USAGE_HOME: home,
           AI_USAGE_NODE: '/opt/homebrew/bin/node',
-          AI_USAGE_NATIVE_HOST_DIRS: [dirA, dirB].join(':'),
+          AI_USAGE_NATIVE_HOST_DIRS: [dirA, dirB].join(delimiter),
         },
       });
       expect(result.extensionId).toBe(EXTENSION_ID);

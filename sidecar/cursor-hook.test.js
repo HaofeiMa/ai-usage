@@ -11,7 +11,7 @@ const hookScript = fileURLToPath(new URL('./cursor-device-hook.mjs', import.meta
 
 describe('cursor device hook', () => {
   it('defaults the log path to ~/.ai-usage/cursor-device.jsonl', () => {
-    expect(cursorDeviceLogPath({ AI_USAGE_HOME: '/tmp/ai-home' })).toBe('/tmp/ai-home/cursor-device.jsonl');
+    expect(cursorDeviceLogPath({ AI_USAGE_HOME: '/tmp/ai-home' })).toBe(join('/tmp/ai-home', 'cursor-device.jsonl'));
     expect(cursorDeviceLogPath({ VIBE_USAGE_CURSOR_DEVICE_LOG: '/tmp/custom.jsonl' })).toBe('/tmp/custom.jsonl');
   });
 
