@@ -109,4 +109,30 @@ describe('costBreakdown', () => {
     expect(resultOff.total.api).toBe(0);
     expect(resultOff.total.subscription).toBe(20);
   });
+
+  it('counts a subscription source once even when two hostnames appear', () => {
+    const result = costBreakdown({
+      buckets: [
+        { source: 'cursor', hostname: 'mbp', inputTokens: 1 },
+        { source: 'cursor', hostname: 'linux', inputTokens: 1 },
+      ],
+      billing: { cursor: { kind: 'subscription', monthly: 20 } },
+      includeChatgptInTotal: true,
+      currency: 'USD',
+    });
+    expect(result.coding.subscription).toBe(20);
+  });
+
+  it('sums API tokens across hostnames', () => {
+    const result = costBreakdown({
+      buckets: [
+        { source: 'codex', hostname: 'mbp', inputTokens: 1_000_000, outputTokens: 0 },
+        { source: 'codex', hostname: 'linux', inputTokens: 1_000_000, outputTokens: 0 },
+      ],
+      billing: { codex: { kind: 'api', inputPerMillion: 2, outputPerMillion: 2 } },
+      includeChatgptInTotal: true,
+      currency: 'USD',
+    });
+    expect(result.coding.api).toBe(4);
+  });
 });

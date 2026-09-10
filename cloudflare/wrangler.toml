@@ -1,0 +1,8 @@
+name = "ai-usage"
+main = "src/worker.js"
+compatibility_date = "2026-09-10"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ai-usage"
+database_id = "52f64127-626d-4b9e-b23a-8c39377f196c"

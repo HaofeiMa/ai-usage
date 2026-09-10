@@ -180,7 +180,7 @@ describe('sidecar dump', () => {
       JSON.stringify({
         buckets: [
           { source: 'cursor', hostname: 'cursor-cloud', inputTokens: 999 },
-          { source: '__kept__', hostname: 'test-host', inputTokens: 7 },
+          { source: '__kept__', inputTokens: 7 },
         ],
         sessions: [{ source: 'cursor', hostname: 'cursor-cloud', durationSeconds: 9 }],
         syncedAt: '2020-01-01T00:00:00.000Z',
@@ -280,11 +280,146 @@ describe('sidecar dump', () => {
     );
   });
 
+  it('dumpSnapshot with injectables uploads only changed buckets and merges other hosts', async () => {
+    writeFileSync(
+      join(tmpHome, 'config.json'),
+      JSON.stringify({
+        apiUrl: 'http://127.0.0.1:9',
+        apiKey: 'secret',
+        hostname: 'mbp',
+      }) + '\n',
+    );
+    const posts = [];
+    const { dumpSnapshot } = await import('./dump.mjs');
+    const ingestImpl = async (_url, _key, buckets, sessions) => {
+      posts.push({ buckets, sessions });
+      return { ingested: buckets.length };
+    };
+    const pullImpl = async () => ({
+      buckets: [
+        {
+          source: 'codex',
+          hostname: 'linux',
+          model: 'g',
+          project: 'p',
+          bucketStart: 't',
+          inputTokens: 9,
+        },
+      ],
+      sessions: [],
+      until: '2026-09-10T05:00:00.000Z',
+    });
+    await dumpSnapshot({ ingestImpl, pullImpl });
+    const snap = JSON.parse(readFileSync(join(tmpHome, 'snapshot.json'), 'utf8'));
+    expect(snap.buckets.some((b) => b.hostname === 'linux' && b.inputTokens === 9)).toBe(true);
+    expect(snap.cloud.ingested).toBe(true);
+    expect(snap.cloud.pulled).toBe(true);
+    const firstCount = posts[0].buckets.length;
+    expect(firstCount).toBeGreaterThan(0);
+    await dumpSnapshot({ ingestImpl, pullImpl });
+    expect(posts[1].buckets.length).toBe(0);
+  });
+
+  it('dumpSnapshot keeps other hosts from remote.json when pullImpl throws', async () => {
+    writeFileSync(
+      join(tmpHome, 'config.json'),
+      JSON.stringify({
+        apiUrl: 'http://127.0.0.1:9',
+        apiKey: 'secret',
+        hostname: 'mbp',
+      }) + '\n',
+    );
+    writeFileSync(
+      join(tmpHome, 'remote.json'),
+      JSON.stringify({
+        buckets: [{ source: 'codex', hostname: 'linux', inputTokens: 9, bucketStart: 't' }],
+        sessions: [],
+        since: '2026-09-01T00:00:00.000Z',
+      }) + '\n',
+    );
+    const { dumpSnapshot } = await import('./dump.mjs');
+    const result = await dumpSnapshot({
+      ingestImpl: async () => ({ ingested: 0 }),
+      pullImpl: async () => {
+        throw new Error('HTTP 500');
+      },
+    });
+    const snap = JSON.parse(readFileSync(join(tmpHome, 'snapshot.json'), 'utf8'));
+    expect(snap.buckets.some((b) => b.hostname === 'linux')).toBe(true);
+    expect(snap.cloud.pulled).toBe(false);
+    expect(snap.cloud.error).toMatch(/拉取失败/);
+    expect(result.pulled).toBe(false);
+  });
+
   it('resolveVibeUsageSrc prefers AI_USAGE_VIBE_USAGE_SRC', async () => {
     const { resolveVibeUsageSrc } = await import('./dump.mjs');
     expect(resolveVibeUsageSrc({ AI_USAGE_VIBE_USAGE_SRC: '/custom/src' }, '/unused')).toBe(
       '/custom/src',
     );
+  });
+
+  describe('host-aware merge', () => {
+    it('keeps other hostnames from remote and uses local for this host', async () => {
+      const { mergeLocalAndRemote } = await import('./merge.mjs');
+      const local = {
+        buckets: [{ source: 'codex', hostname: 'mbp', inputTokens: 3, bucketStart: 'a' }],
+        sessions: [{ source: 'codex', sessionHash: 's-mbp', hostname: 'mbp' }],
+      };
+      const remote = {
+        buckets: [
+          { source: 'codex', hostname: 'mbp', inputTokens: 1, bucketStart: 'a' },
+          { source: 'codex', hostname: 'linux', inputTokens: 9, bucketStart: 'a' },
+          { source: 'cursor', hostname: 'cursor-cloud', inputTokens: 8, bucketStart: 'a' },
+        ],
+        sessions: [
+          { source: 'codex', sessionHash: 's-linux', hostname: 'linux' },
+          { source: 'codex', sessionHash: 's-mbp', hostname: 'mbp' },
+        ],
+      };
+      const merged = mergeLocalAndRemote(local, remote, 'mbp');
+      expect(merged.buckets).toEqual([
+        { source: 'codex', hostname: 'linux', inputTokens: 9, bucketStart: 'a' },
+        { source: 'codex', hostname: 'mbp', inputTokens: 3, bucketStart: 'a' },
+      ]);
+      expect(merged.sessions.map((s) => s.sessionHash).sort()).toEqual(['s-linux', 's-mbp']);
+    });
+
+    it('mergeSnapshotBySourceForHost does not drop other hostnames in previous', async () => {
+      const { mergeSnapshotBySourceForHost } = await import('./merge.mjs');
+      const previous = {
+        buckets: [
+          { source: 'chatgpt-web', hostname: 'linux', inputTokens: 50 },
+          { source: 'chatgpt-web', hostname: 'mbp', inputTokens: 1 },
+          { source: 'cursor', hostname: 'mbp', inputTokens: 7 },
+        ],
+        sessions: [],
+      };
+      const collected = {
+        buckets: [{ source: 'chatgpt-web', hostname: 'mbp', inputTokens: 40 }],
+        sessions: [],
+        succeededSources: ['chatgpt-web'],
+        syncedAt: 'new',
+      };
+      const local = mergeSnapshotBySourceForHost(previous, collected, 'mbp');
+      expect(local.buckets).toEqual([
+        { source: 'chatgpt-web', hostname: 'mbp', inputTokens: 40 },
+        { source: 'cursor', hostname: 'mbp', inputTokens: 7 },
+      ]);
+    });
+
+    it('upsertByIdentity last-write-wins without dropping untouched keys', async () => {
+      const { upsertByIdentity, bucketIdentity } = await import('./merge.mjs');
+      const prev = [
+        { source: 'codex', model: 'g', project: 'p', hostname: 'linux', bucketStart: 't1', inputTokens: 1 },
+        { source: 'codex', model: 'g', project: 'p', hostname: 'win', bucketStart: 't1', inputTokens: 2 },
+      ];
+      const incoming = [
+        { source: 'codex', model: 'g', project: 'p', hostname: 'win', bucketStart: 't1', inputTokens: 5 },
+      ];
+      const out = upsertByIdentity(prev, incoming, bucketIdentity);
+      expect(out.find((b) => b.hostname === 'win').inputTokens).toBe(5);
+      expect(out.find((b) => b.hostname === 'linux').inputTokens).toBe(1);
+    });
   });
 
   it('resolveVibeUsageSrc prefers vendored parsers then sibling checkouts', async () => {

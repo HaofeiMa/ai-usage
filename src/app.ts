@@ -23,6 +23,7 @@ import {
   type SourceBilling,
 } from './lib/billing.js';
 import { applyTheme, type ThemePref } from './lib/theme.js';
+import { cloudSyncLabel } from './lib/sync-status.js';
 import logo from './assets/logo.png';
 
 type Bucket = {
@@ -53,6 +54,12 @@ type Snapshot = {
   buckets: Bucket[];
   sessions: Session[];
   syncedAt?: string;
+  cloud?: {
+    configured?: boolean;
+    ingested?: boolean;
+    pulled?: boolean;
+    error?: string | null;
+  };
 };
 
 type AppConfig = {
@@ -61,6 +68,9 @@ type AppConfig = {
   theme?: ThemePref;
   currency?: Currency;
   billing?: BillingConfig;
+  apiUrl?: string;
+  apiKey?: string;
+  hostname?: string;
 };
 
 type DashboardState = {
@@ -338,6 +348,7 @@ function dashboardBody(snapshot: Snapshot): string {
       ${missing ? `<div class="banner">暂无本地快照。请点击刷新采集本机用量（写入 ${esc(remote?.home ?? '~/.ai-usage')}）。</div>` : ''}
       ${chatgptEmpty ? `<div class="banner">对话分段还没有数据。请到设置里加载 ChatGPT 网页扩展。</div>` : ''}
       ${remote?.lastError ? `<div class="error">上次更新失败：${esc(remote.lastError)}</div>` : ''}
+      ${snapshot.cloud?.error ? `<div class="error">${esc(snapshot.cloud.error)}</div>` : ''}
       ${summaryGrid(cards, chatgptInPlay)}
       <div class="chart-card">
         <h2>Token 趋势</h2>
@@ -395,6 +406,13 @@ function billingRow(source: string): string {
   </div>`;
 }
 
+function cloudStatusClass(): string {
+  const cloud = remote?.snapshot?.cloud;
+  if (cloud?.error) return 'error';
+  if (cloud?.pulled) return 'ok';
+  return 'muted';
+}
+
 function settingsBody(): string {
   const extensionReady = Boolean(remote?.chatgptExtensionReady);
   const cursorReady = Boolean(remote?.cursorDeviceReady);
@@ -437,6 +455,20 @@ function settingsBody(): string {
             ? '<p class="ok">已在采集本机 Cursor 用量。</p>'
             : '<p>应用启动时会自动安装 Cursor hook。之后在 Cursor 里对话就会记入本机用量，不用再手动安装。</p>'
         }
+      </section>
+      <section class="settings-card">
+        <h2>多设备同步</h2>
+        <p class="muted">四台填写同一套 Worker 地址和密钥。数据在你自己的 Cloudflare D1，不经过 vibecafe。两台电脑系统名相同时，请改设备名。</p>
+        <p class="${cloudStatusClass()}">${esc(cloudSyncLabel(remote?.config ?? {}, remote?.snapshot?.cloud))}</p>
+        <label class="stack">同步地址
+          <input id="sync-api-url" type="url" placeholder="https://ai-usage.example.workers.dev" value="${esc(remote?.config.apiUrl ?? '')}" />
+        </label>
+        <label class="stack">密钥
+          <input id="sync-api-key" type="password" autocomplete="off" value="${esc(remote?.config.apiKey ?? '')}" />
+        </label>
+        <label class="stack">本机设备名
+          <input id="sync-hostname" type="text" value="${esc(remote?.config.hostname ?? '')}" />
+        </label>
       </section>
       <section class="settings-card">
         <h2>应用</h2>
@@ -521,6 +553,15 @@ function bind(root: HTMLElement) {
     includeChatgpt = (event.target as HTMLInputElement).checked;
     await persistConfig({ includeChatgptInTotal: includeChatgpt }, false);
   });
+  const bindSyncField = (id: string, key: 'apiUrl' | 'apiKey' | 'hostname') => {
+    root.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener('change', async (event) => {
+      const value = (event.target as HTMLInputElement).value.trim();
+      await persistConfig({ [key]: value }, false);
+    });
+  };
+  bindSyncField('sync-api-url', 'apiUrl');
+  bindSyncField('sync-api-key', 'apiKey');
+  bindSyncField('sync-hostname', 'hostname');
   root.querySelector('#filter-host')?.addEventListener('change', (event) => {
     hostFilter = (event.target as HTMLSelectElement).value;
     render(root);

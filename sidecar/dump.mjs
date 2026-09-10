@@ -2,6 +2,30 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, hostname as osHostname } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  dropCloudRows,
+  mergeSnapshotBySource,
+  mergeSnapshotBySourceForHost,
+  mergeLocalAndRemote,
+} from './merge.mjs';
+import {
+  changedBuckets,
+  changedSessions,
+  markUploaded,
+  readRemoteCache,
+  writeRemoteCache,
+  applyPull,
+  cloudStatus,
+} from './remote-sync.mjs';
+import {
+  loadState,
+  saveState,
+  pruneState,
+  bucketKey,
+  sessionKey,
+} from '../vendor/vibe-usage/src/state.js';
+
+export { dropCloudRows, mergeSnapshotBySource };
 
 export function defaultRepoRoot() {
   return fileURLToPath(new URL('..', import.meta.url));
@@ -48,23 +72,6 @@ export function stripText(value) {
   return out;
 }
 
-export function mergeSnapshotBySource(previous, collected) {
-  const succeeded = new Set(collected.succeededSources || []);
-  const prevBuckets = Array.isArray(previous?.buckets) ? previous.buckets : [];
-  const prevSessions = Array.isArray(previous?.sessions) ? previous.sessions : [];
-  return {
-    buckets: [
-      ...(collected.buckets || []),
-      ...prevBuckets.filter((item) => !succeeded.has(item?.source)),
-    ],
-    sessions: [
-      ...(collected.sessions || []),
-      ...prevSessions.filter((item) => !succeeded.has(item?.source)),
-    ],
-    syncedAt: collected.syncedAt,
-  };
-}
-
 function readSnapshot(home) {
   try {
     return JSON.parse(readFileSync(join(home, 'snapshot.json'), 'utf8'));
@@ -85,6 +92,7 @@ async function loadVibeUsageModules() {
     loadConfig: configMod.loadConfig,
     saveConfig: configMod.saveConfig,
     ingest: apiMod.ingest,
+    getJson: apiMod.getJson,
   };
 }
 
@@ -102,9 +110,6 @@ export function stampHostname(items, hostname) {
   return items;
 }
 
-export function dropCloudRows(items) {
-  return (items || []).filter((item) => item?.hostname !== 'cursor-cloud');
-}
 
 export async function collectLocal({ aiUsageHome } = {}) {
   applyAiUsageEnv(aiUsageHome);
@@ -156,33 +161,103 @@ export async function collectLocal({ aiUsageHome } = {}) {
   };
 }
 
-async function maybeIngest(buckets, sessions) {
-  const { loadConfig, ingest } = await loadVibeUsageModules();
-  const config = loadConfig();
-  const apiUrl = config?.apiUrl?.trim();
-  const apiKey = config?.apiKey?.trim();
-  if (!apiUrl || !apiKey) return false;
-
-  await ingest(apiUrl, apiKey, buckets, {}, sessions.length > 0 ? sessions : undefined);
-  return true;
+function cloudErrorMessage(kind, err) {
+  if (err?.message === 'UNAUTHORIZED' || err?.statusCode === 401) return '密钥无效';
+  if (kind === 'ingest') return `上传失败：${err?.message || err}`;
+  return '拉取失败，合计可能不完整';
 }
 
-export async function dumpSnapshot({ aiUsageHome } = {}) {
+async function defaultIngest(apiUrl, apiKey, buckets, sessions) {
+  if (!buckets.length && !(sessions?.length)) return { ingested: 0 };
+  const { ingest } = await loadVibeUsageModules();
+  return ingest(apiUrl, apiKey, buckets, {}, sessions?.length ? sessions : undefined);
+}
+
+async function defaultPull({ apiUrl, apiKey, since }) {
+  const { getJson } = await loadVibeUsageModules();
+  const items = { buckets: [], sessions: [] };
+  let cursor;
+  let until;
+  do {
+    const qs = new URLSearchParams();
+    if (since) qs.set('since', since);
+    else qs.set('days', '90');
+    if (cursor) qs.set('cursor', cursor);
+    const page = await getJson(apiUrl, apiKey, `/api/usage?${qs}`, { timeoutMs: 30_000 });
+    items.buckets.push(...(page.buckets || []));
+    items.sessions.push(...(page.sessions || []));
+    cursor = page.cursor;
+    until = page.until || until;
+  } while (cursor);
+  return { ...items, until: until || new Date().toISOString() };
+}
+
+export async function dumpSnapshot({ aiUsageHome, ingestImpl, pullImpl } = {}) {
   const home = applyAiUsageEnv(aiUsageHome);
   const collected = await collectLocal({ aiUsageHome: home });
-  const merged = mergeSnapshotBySource(readSnapshot(home), collected);
+  const { loadConfig } = await loadVibeUsageModules();
+  const config = loadConfig() || {};
+  const host = resolveStableHostname(config);
+  const previous = readSnapshot(home) || { buckets: [], sessions: [] };
+  stampHostname(previous.buckets || [], host);
+  stampHostname(previous.sessions || [], host);
+  const local = mergeSnapshotBySourceForHost(previous, collected, host);
+  local.buckets = dropCloudRows(local.buckets);
+  local.sessions = dropCloudRows(local.sessions);
+
+  const apiUrl = typeof config.apiUrl === 'string' ? config.apiUrl.trim() : '';
+  const apiKey = typeof config.apiKey === 'string' ? config.apiKey.trim() : '';
+  const configured = Boolean(apiUrl && apiKey);
+
+  let ingested = false;
+  let pulled = false;
+  let error = null;
+  let remote = configured ? readRemoteCache(home) : { buckets: [], sessions: [], since: null };
+
+  if (configured) {
+    const doIngest = ingestImpl || defaultIngest;
+    const doPull = pullImpl || defaultPull;
+    try {
+      const state = loadState();
+      const bucketsOut = changedBuckets(local.buckets, state);
+      const sessionsOut = changedSessions(local.sessions, state);
+      await doIngest(apiUrl, apiKey, bucketsOut, sessionsOut);
+      ingested = true;
+      const next = markUploaded(state, bucketsOut, sessionsOut);
+      pruneState(
+        next,
+        new Set(local.buckets.map((item) => bucketKey(item))),
+        new Set(local.sessions.map((item) => sessionKey(item))),
+        new Set(collected.succeededSources || []),
+      );
+      saveState(next);
+    } catch (err) {
+      error = cloudErrorMessage('ingest', err);
+    }
+    try {
+      const page = await doPull({ apiUrl, apiKey, since: remote.since });
+      remote = applyPull(remote, page);
+      writeRemoteCache(home, remote);
+      pulled = true;
+    } catch (err) {
+      const pullErr = cloudErrorMessage('pull', err);
+      error = error ? `${error}；${pullErr}` : pullErr;
+    }
+  }
+
+  const merged = mergeLocalAndRemote(local, remote, host);
   const snapshot = {
-    ...merged,
     buckets: dropCloudRows(merged.buckets),
     sessions: dropCloudRows(merged.sessions),
+    syncedAt: collected.syncedAt,
+    cloud: cloudStatus({ configured, ingested, pulled, error }),
   };
   const snapshotPath = join(home, 'snapshot.json');
 
   mkdirSync(home, { recursive: true });
   writeFileSync(snapshotPath, JSON.stringify(snapshot, null, 2) + '\n', 'utf8');
 
-  const ingested = await maybeIngest(snapshot.buckets, snapshot.sessions);
-  return { snapshotPath, ingested, ...snapshot };
+  return { snapshotPath, ingested, pulled, cloudError: error, ...snapshot };
 }
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];

@@ -12,6 +12,6 @@ export default defineConfig({
     },
   ],
   test: {
-    include: ['src/**/*.test.ts', 'sidecar/**/*.test.js'],
+    include: ['src/**/*.test.ts', 'sidecar/**/*.test.js', 'cloudflare/**/*.test.js'],
   },
 });

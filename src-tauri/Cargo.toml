@@ -1,6 +1,6 @@
 [package]
 name = "ai-usage"
-version = "0.1.0"
+version = "0.1.1"
 description = "AI Usage tray dashboard"
 authors = ["you"]
 edition = "2021"
