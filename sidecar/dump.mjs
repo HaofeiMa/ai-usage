@@ -11,6 +11,7 @@ export function resolveVibeUsageSrc(env = process.env, repoRoot = defaultRepoRoo
   const override = typeof env.AI_USAGE_VIBE_USAGE_SRC === 'string' ? env.AI_USAGE_VIBE_USAGE_SRC.trim() : '';
   if (override) return override;
   const candidates = [
+    join(repoRoot, 'vendor/vibe-usage/src'),
     join(repoRoot, '../vibe-usage-chatgpt-web/src'),
     join(repoRoot, '../vibe-usage/src'),
   ];
@@ -31,6 +32,8 @@ export function applyAiUsageEnv(aiUsageHome) {
   process.env.VIBE_USAGE_CONFIG_DIR = home;
   process.env.VIBE_USAGE_STATE_DIR = home;
   process.env.VIBE_USAGE_CACHE_DIR = join(home, 'cache');
+  process.env.VIBE_USAGE_CURSOR_MODE = 'device';
+  process.env.VIBE_USAGE_CURSOR_DEVICE_LOG = join(home, 'cursor-device.jsonl');
   return home;
 }
 
@@ -99,6 +102,10 @@ export function stampHostname(items, hostname) {
   return items;
 }
 
+export function dropCloudRows(items) {
+  return (items || []).filter((item) => item?.hostname !== 'cursor-cloud');
+}
+
 export async function collectLocal({ aiUsageHome } = {}) {
   applyAiUsageEnv(aiUsageHome);
   const { parsers, normalizeParserResult, loadConfig, saveConfig } = await loadVibeUsageModules();
@@ -163,7 +170,12 @@ async function maybeIngest(buckets, sessions) {
 export async function dumpSnapshot({ aiUsageHome } = {}) {
   const home = applyAiUsageEnv(aiUsageHome);
   const collected = await collectLocal({ aiUsageHome: home });
-  const snapshot = mergeSnapshotBySource(readSnapshot(home), collected);
+  const merged = mergeSnapshotBySource(readSnapshot(home), collected);
+  const snapshot = {
+    ...merged,
+    buckets: dropCloudRows(merged.buckets),
+    sessions: dropCloudRows(merged.sessions),
+  };
   const snapshotPath = join(home, 'snapshot.json');
 
   mkdirSync(home, { recursive: true });

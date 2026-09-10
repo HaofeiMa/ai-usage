@@ -27,7 +27,14 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "infoPlist": "Info.plist"
+      "infoPlist": "Info.plist",
+      "signingIdentity": "-"
+    },
+    "resources": {
+      "../sidecar": "sidecar",
+      "../extension": "extension",
+      "../native-host": "native-host",
+      "../vendor/vibe-usage": "vendor/vibe-usage"
     }
   }
 }

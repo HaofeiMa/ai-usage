@@ -209,12 +209,12 @@ test('processBufferChunk appends first complete frame while holding incomplete s
   });
 });
 
-test('host template manifest exists with placeholder origin', async () => {
+test('host template manifest uses the pinned extension id', async () => {
   const manifestPath = path.join(__dirname, 'com.aiusage.chatgpt.json');
   const raw = await fs.readFile(manifestPath, 'utf8');
   const manifest = JSON.parse(raw);
   assert.equal(manifest.name, 'com.aiusage.chatgpt');
   assert.equal(manifest.type, 'stdio');
   assert.equal(manifest.path, 'HOST_PATH');
-  assert.ok(manifest.allowed_origins.includes('chrome-extension://REPLACE_WITH_EXTENSION_ID/'));
+  assert.ok(manifest.allowed_origins.includes('chrome-extension://mkcbknlcbjgbbabclannkpdeaigfjodl/'));
 });

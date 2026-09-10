@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem};
@@ -19,6 +19,8 @@ use tauri_plugin_autostart::ManagerExt;
 const TRAY_ID: &str = "main";
 const WINDOW_LABEL: &str = "dashboard";
 const DUMP_INTERVAL: Duration = Duration::from_secs(30 * 60);
+
+static RESOURCE_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 struct AppState {
     last_error: Mutex<Option<String>>,
@@ -34,6 +36,8 @@ struct DashboardState {
     extension_path: String,
     last_error: Option<String>,
     missing_snapshot: bool,
+    chatgpt_extension_ready: bool,
+    cursor_device_ready: bool,
 }
 
 fn home_dir() -> PathBuf {
@@ -85,6 +89,14 @@ fn ensure_config(home: &Path) -> Value {
         cfg["includeChatgptInTotal"] = json!(true);
         dirty = true;
     }
+    if cfg.get("theme").and_then(Value::as_str).is_none() {
+        cfg["theme"] = json!("system");
+        dirty = true;
+    }
+    if cfg.get("currency").and_then(Value::as_str).is_none() {
+        cfg["currency"] = json!("USD");
+        dirty = true;
+    }
     if dirty {
         let _ = write_json(&config_path(home), &cfg);
     }
@@ -98,28 +110,104 @@ fn include_chatgpt(config: &Value) -> bool {
         .unwrap_or(true)
 }
 
+fn jsonl_has_record(path: &Path) -> bool {
+    let Ok(text) = fs::read_to_string(path) else {
+        return false;
+    };
+    text.lines().any(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        serde_json::from_str::<Value>(trimmed)
+            .ok()
+            .map(|value| value.is_object())
+            .unwrap_or(false)
+    })
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    std::env::var(name)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+}
+
+fn resolve_resource_root(app: Option<&AppHandle>) -> PathBuf {
+    if let Some(p) = env_path("AI_USAGE_ROOT") {
+        return p;
+    }
+    if cfg!(debug_assertions) {
+        return PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    }
+    if let Some(app) = app {
+        if let Ok(dir) = app.path().resource_dir() {
+            return dir;
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+fn init_resource_root(app: &AppHandle) {
+    let _ = RESOURCE_ROOT.set(resolve_resource_root(Some(app)));
+}
+
+fn resource_root() -> PathBuf {
+    RESOURCE_ROOT
+        .get()
+        .cloned()
+        .unwrap_or_else(|| resolve_resource_root(None))
+}
+
+fn dump_script_from(root: &Path) -> PathBuf {
+    root.join("sidecar/dump.mjs")
+}
+
+fn extension_path_from(root: &Path) -> PathBuf {
+    root.join("extension")
+}
+
+fn hook_installer_from(root: &Path) -> PathBuf {
+    root.join("sidecar/install-cursor-hook.mjs")
+}
+
+fn native_host_installer_from(root: &Path) -> PathBuf {
+    root.join("sidecar/install-native-host.mjs")
+}
+
 fn extension_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../extension")
+    extension_path_from(&resource_root())
 }
 
 fn dump_script() -> PathBuf {
-    if let Ok(p) = std::env::var("AI_USAGE_DUMP") {
-        if !p.trim().is_empty() {
-            return PathBuf::from(p);
-        }
+    if let Some(p) = env_path("AI_USAGE_DUMP") {
+        return p;
     }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/dump.mjs")
+    dump_script_from(&resource_root())
 }
 
 fn find_node() -> PathBuf {
-    if let Ok(p) = std::env::var("AI_USAGE_NODE") {
-        if !p.trim().is_empty() {
-            return PathBuf::from(p);
-        }
+    if let Some(p) = env_path("AI_USAGE_NODE") {
+        return p;
     }
-    for candidate in ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"] {
-        if Path::new(candidate).exists() {
-            return PathBuf::from(candidate);
+    let mut candidates = vec![
+        PathBuf::from("/opt/homebrew/bin/node"),
+        PathBuf::from("/usr/local/bin/node"),
+        PathBuf::from("/usr/bin/node"),
+    ];
+    if let Ok(pf) = std::env::var("ProgramFiles") {
+        candidates.push(PathBuf::from(pf).join("nodejs/node.exe"));
+    }
+    if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
+        candidates.push(PathBuf::from(pf86).join("nodejs/node.exe"));
+    }
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(local).join("Programs/nodejs/node.exe"));
+    }
+    for candidate in candidates {
+        if candidate.exists() {
+            return candidate;
         }
     }
     PathBuf::from("node")
@@ -201,6 +289,8 @@ fn dashboard_payload(app: &AppHandle) -> DashboardState {
         extension_path: extension.display().to_string(),
         last_error,
         missing_snapshot,
+        chatgpt_extension_ready: jsonl_has_record(&home.join("chatgpt-web.jsonl")),
+        cursor_device_ready: jsonl_has_record(&home.join("cursor-device.jsonl")),
     }
 }
 
@@ -289,7 +379,7 @@ fn open_dashboard(app: &AppHandle) {
         .inner_size(1120.0, 800.0)
         .min_inner_size(860.0, 600.0)
         .resizable(true)
-        .skip_taskbar(true)
+        .skip_taskbar(false)
         .visible(true);
     if let Ok(window) = builder.build() {
         let _ = window.set_focus();
@@ -298,6 +388,72 @@ fn open_dashboard(app: &AppHandle) {
 
 fn quit_app(app: &AppHandle) {
     app.exit(0);
+}
+
+fn hook_installer() -> PathBuf {
+    hook_installer_from(&resource_root())
+}
+
+fn native_host_installer() -> PathBuf {
+    native_host_installer_from(&resource_root())
+}
+
+fn run_node_script(script: PathBuf) -> Result<String, String> {
+    if !script.exists() {
+        return Err(format!("找不到脚本：{}", script.display()));
+    }
+    let node = find_node();
+    let mut cmd = Command::new(&node);
+    cmd.arg(&script)
+        .env("AI_USAGE_HOME", ai_usage_home())
+        .env("AI_USAGE_NODE", &node)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(unix)]
+    {
+        cmd.env("PATH", unix_path());
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| format!("无法启动 node：{e}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(if !stderr.trim().is_empty() {
+            stderr.trim().to_string()
+        } else if !stdout.trim().is_empty() {
+            stdout.trim().to_string()
+        } else {
+            format!("{} 失败", script.display())
+        })
+    }
+}
+
+fn bootstrap_collectors() {
+    let _ = run_node_script(hook_installer());
+    let _ = run_node_script(native_host_installer());
+}
+
+fn open_in_file_manager(path: &str) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    #[cfg(target_os = "macos")]
+    let mut cmd = Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut cmd = Command::new("explorer");
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let mut cmd = Command::new("xdg-open");
+    cmd.arg(&target);
+    cmd.status()
+        .map_err(|e| format!("无法打开 {path}：{e}"))
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("打开 {path} 失败"))
+            }
+        })
 }
 
 #[tauri::command]
@@ -351,12 +507,23 @@ fn quit_command(app: AppHandle) {
     quit_app(&app);
 }
 
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    open_in_file_manager(&path)
+}
+
+#[tauri::command]
+fn install_cursor_hook() -> Result<String, String> {
+    run_node_script(hook_installer())
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "打开仪表盘", true, None::<&str>)?;
     let refresh = MenuItem::with_id(app, "refresh", "更新数据", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &refresh, &quit])?;
 
+    #[allow(unused_mut)]
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -379,8 +546,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             }
         });
 
+    #[cfg(not(target_os = "macos"))]
     if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone()).icon_as_template(true);
+        builder = builder.icon(icon.clone());
     }
 
     builder.build(app)?;
@@ -405,12 +573,13 @@ pub fn run() {
             get_state,
             refresh_data,
             save_config,
-            quit_command
+            quit_command,
+            open_path,
+            install_cursor_hook
         ])
         .setup(|app| {
-            #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-
+            init_resource_root(&app.handle());
+            bootstrap_collectors();
             build_tray(&app.handle())?;
             update_tray_title(&app.handle());
 
@@ -435,19 +604,20 @@ pub fn run() {
                 api.prevent_close();
                 let _ = window.destroy();
             }
-            if let WindowEvent::Destroyed = event {
-                #[cfg(target_os = "macos")]
-                set_activation_policy(window.app_handle(), tauri::ActivationPolicy::Accessory);
-            }
         })
         .build(tauri::generate_context!())
         .expect("error while building AI Usage");
 
-    app.run(|_app, event| {
-        if let RunEvent::ExitRequested { api, code, .. } = event {
-            if code.is_none() {
-                api.prevent_exit();
+    app.run(|app, event| {
+        match event {
+            RunEvent::ExitRequested { api, code, .. } => {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
             }
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen { .. } => open_dashboard(app),
+            _ => {}
         }
     });
 }
@@ -467,5 +637,25 @@ mod dump_lock_tests {
     fn dump_lock_runs_when_free() {
         let lock = Mutex::new(());
         assert_eq!(try_with_dump_lock(&lock, || 7), Some(7));
+    }
+
+    #[test]
+    fn dump_script_from_joins_sidecar() {
+        assert_eq!(
+            dump_script_from(Path::new("/bundle")),
+            PathBuf::from("/bundle/sidecar/dump.mjs")
+        );
+        assert_eq!(
+            extension_path_from(Path::new("/bundle")),
+            PathBuf::from("/bundle/extension")
+        );
+        assert_eq!(
+            hook_installer_from(Path::new("/bundle")),
+            PathBuf::from("/bundle/sidecar/install-cursor-hook.mjs")
+        );
+        assert_eq!(
+            native_host_installer_from(Path::new("/bundle")),
+            PathBuf::from("/bundle/sidecar/install-native-host.mjs")
+        );
     }
 }

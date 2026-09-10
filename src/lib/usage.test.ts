@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   computedTotal,
+  dropCloudRows,
   filterBuckets,
   filterSessions,
   summaryCards,
   trayTokens,
-  type View,
 } from './usage.js';
 
 const codingBucket = {
@@ -28,12 +28,14 @@ const codingSession = {
   source: 'cursor',
   activeSeconds: 120,
   durationSeconds: 300,
+  messageCount: 8,
 };
 
 const chatgptSession = {
   source: 'chatgpt-web',
   activeSeconds: 45,
   durationSeconds: 90,
+  messageCount: 4,
 };
 
 describe('filterBuckets', () => {
@@ -58,6 +60,15 @@ describe('filterBuckets', () => {
     const copy = [...buckets];
     filterBuckets(copy, 'coding', true);
     expect(copy).toEqual(buckets);
+  });
+
+  it('coding view keeps Codex and other non-chatgpt sources', () => {
+    const codex = { source: 'codex', inputTokens: 9 };
+    const claude = { source: 'claude-code', inputTokens: 4 };
+    expect(filterBuckets([codex, chatgptBucket, claude], 'coding', true)).toEqual([
+      codex,
+      claude,
+    ]);
   });
 });
 
@@ -101,19 +112,42 @@ describe('summaryCards', () => {
   it('aggregates token and session metrics', () => {
     expect(summaryCards([codingBucket, chatgptBucket], [codingSession, chatgptSession])).toEqual({
       totalTokens: 440,
+      inputTokens: 300,
+      outputTokens: 140,
       cachedTokens: 20,
       activeSeconds: 165,
       durationSeconds: 390,
+      sessionCount: 2,
+      messageCount: 12,
     });
   });
 
   it('treats missing numeric fields as 0', () => {
     expect(summaryCards([{ source: 'cursor' }], [{ source: 'cursor' }])).toEqual({
       totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
       cachedTokens: 0,
       activeSeconds: 0,
       durationSeconds: 0,
+      sessionCount: 1,
+      messageCount: 0,
     });
+  });
+});
+
+describe('dropCloudRows', () => {
+  it('drops cursor-cloud hostname rows and keeps local device rows', () => {
+    const local = { source: 'cursor', hostname: 'Huffies-Mac-mini', inputTokens: 10 };
+    const cloud = { source: 'cursor', hostname: 'cursor-cloud', inputTokens: 999 };
+    const other = { source: 'codex', hostname: 'Huffies-Mac-mini', inputTokens: 3 };
+    expect(dropCloudRows([local, cloud, other])).toEqual([local, other]);
+  });
+
+  it('does not mutate the input array', () => {
+    const rows = [{ source: 'cursor', hostname: 'cursor-cloud' }];
+    dropCloudRows(rows);
+    expect(rows).toHaveLength(1);
   });
 });
 

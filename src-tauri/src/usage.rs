@@ -71,7 +71,9 @@ pub fn tray_label(buckets: &[Value], include_chatgpt: bool, now: DateTime<Local>
         .iter()
         .filter(|bucket| {
             let source = bucket.get("source").and_then(Value::as_str).unwrap_or("");
-            include_source(source, include_chatgpt)
+            let hostname = bucket.get("hostname").and_then(Value::as_str).unwrap_or("");
+            hostname != "cursor-cloud"
+                && include_source(source, include_chatgpt)
                 && bucket
                     .get("bucketStart")
                     .and_then(Value::as_str)
@@ -132,5 +134,33 @@ mod tests {
         ];
         assert_eq!(tray_label(&buckets, true, now), "2.0M");
         assert_eq!(tray_label(&buckets, false, now), "1.2M");
+    }
+
+    #[test]
+    fn tray_label_drops_cursor_cloud_rows() {
+        let now = Local.with_ymd_and_hms(2026, 9, 9, 15, 30, 0).unwrap();
+        let (start, _) = today_window(now);
+        let today = start.with_timezone(&Utc).to_rfc3339();
+        let buckets = vec![
+            json!({
+                "source": "cursor",
+                "hostname": "Huffies-Mac-mini",
+                "bucketStart": today,
+                "inputTokens": 1_200_000,
+                "outputTokens": 0,
+                "cachedInputTokens": 0,
+                "reasoningOutputTokens": 0
+            }),
+            json!({
+                "source": "cursor",
+                "hostname": "cursor-cloud",
+                "bucketStart": today,
+                "inputTokens": 9_000_000,
+                "outputTokens": 0,
+                "cachedInputTokens": 0,
+                "reasoningOutputTokens": 0
+            }),
+        ];
+        assert_eq!(tray_label(&buckets, true, now), "1.2M");
     }
 }

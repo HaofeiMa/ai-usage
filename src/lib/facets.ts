@@ -1,3 +1,5 @@
+import { projectKey } from './labels.js';
+
 export type FacetFilters = {
   hostnames?: string[];
   sources?: string[];
@@ -28,7 +30,7 @@ export function filterByFacets<
       allowed(facets.hostnames, item.hostname) &&
       allowed(facets.sources, item.source) &&
       allowed(facets.models, item.model) &&
-      allowed(facets.projects, item.project),
+      allowed(facets.projects, projectKey(item.project)),
   );
 }
 
@@ -49,6 +51,14 @@ export function uniqueValues<T>(items: T[], key: keyof T): string[] {
   for (const item of items) {
     const value = String(item[key] ?? '');
     if (value) seen.add(value);
+  }
+  return [...seen].sort();
+}
+
+export function uniqueProjects<T extends { project?: string }>(items: T[]): string[] {
+  const seen = new Set<string>();
+  for (const item of items) {
+    seen.add(projectKey(item.project));
   }
   return [...seen].sort();
 }

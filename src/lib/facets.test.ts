@@ -38,6 +38,16 @@ describe('filterByFacets', () => {
       matching,
     ]);
   });
+
+  it('treats missing and unknown projects as the same unnamed key', () => {
+    const unnamed = { source: 'cursor', hostname: 'mbp', project: 'unknown' };
+    const missing = { source: 'cursor', hostname: 'mbp' };
+    const named = { source: 'cursor', hostname: 'mbp', project: 'ai-usage' };
+    expect(filterByFacets([unnamed, missing, named], { projects: ['unknown'] })).toEqual([
+      unnamed,
+      missing,
+    ]);
+  });
 });
 
 describe('filterSessionsByFacets', () => {
@@ -103,6 +113,52 @@ describe('tokenTrend', () => {
     );
     expect(series.map((row) => row.totalTokens)).toEqual([10, 5]);
   });
+
+  it('fills every hour in the window with zeros when there is no data', () => {
+    const window = {
+      start: new Date(2026, 8, 10, 0, 0, 0),
+      end: new Date(2026, 8, 11, 0, 0, 0),
+    };
+    const series = tokenTrend(
+      [
+        {
+          source: 'cursor',
+          bucketStart: new Date(2026, 8, 10, 10, 0).toISOString(),
+          inputTokens: 50,
+          outputTokens: 0,
+          reasoningOutputTokens: 0,
+        },
+      ],
+      'hour',
+      window,
+    );
+    expect(series).toHaveLength(24);
+    expect(series[0]).toMatchObject({ label: '00:00', totalTokens: 0 });
+    expect(series[10]).toMatchObject({ label: '10:00', codingTokens: 50, totalTokens: 50 });
+    expect(series[23]).toMatchObject({ label: '23:00', totalTokens: 0 });
+  });
+
+  it('fills every local day in the window with zeros when there is no data', () => {
+    const window = {
+      start: new Date(2026, 8, 8, 0, 0, 0),
+      end: new Date(2026, 8, 11, 0, 0, 0),
+    };
+    const series = tokenTrend(
+      [
+        {
+          source: 'cursor',
+          bucketStart: new Date(2026, 8, 9, 15, 0).toISOString(),
+          inputTokens: 8,
+          outputTokens: 0,
+          reasoningOutputTokens: 0,
+        },
+      ],
+      'day',
+      window,
+    );
+    expect(series.map((row) => row.totalTokens)).toEqual([0, 8, 0]);
+    expect(series.map((row) => row.label)).toEqual(['9/8', '9/9', '9/10']);
+  });
 });
 
 describe('distribution', () => {
@@ -119,6 +175,18 @@ describe('distribution', () => {
     expect(distribution(buckets, 'model')).toEqual([
       { key: 'a', tokens: 13 },
       { key: 'b', tokens: 7 },
+    ]);
+  });
+
+  it('groups empty and unknown projects together', () => {
+    const buckets = [
+      { source: 'cursor', project: 'unknown', inputTokens: 10, outputTokens: 0, reasoningOutputTokens: 0 },
+      { source: 'cursor', inputTokens: 5, outputTokens: 0, reasoningOutputTokens: 0 },
+      { source: 'codex', project: 'ai-usage', inputTokens: 2, outputTokens: 0, reasoningOutputTokens: 0 },
+    ];
+    expect(distribution(buckets, 'project')).toEqual([
+      { key: 'unknown', tokens: 15 },
+      { key: 'ai-usage', tokens: 2 },
     ]);
   });
 });

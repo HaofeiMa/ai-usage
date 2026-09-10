@@ -1,6 +1,11 @@
 export type View = 'coding' | 'chatgpt' | 'all';
 
 const CHATGPT_SOURCE = 'chatgpt-web';
+export const CURSOR_CLOUD_HOSTNAME = 'cursor-cloud';
+
+export function dropCloudRows<T extends { hostname?: string }>(items: T[]): T[] {
+  return items.filter((item) => item.hostname !== CURSOR_CLOUD_HOSTNAME);
+}
 
 function num(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -55,26 +60,36 @@ export function summaryCards(
   sessions: Record<string, unknown>[],
 ) {
   let totalTokens = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
   let cachedTokens = 0;
 
   for (const bucket of buckets) {
     totalTokens += computedTotal(bucket);
+    inputTokens += num(bucket.inputTokens);
+    outputTokens += num(bucket.outputTokens) + num(bucket.reasoningOutputTokens);
     cachedTokens += num(bucket.cachedInputTokens);
   }
 
   let activeSeconds = 0;
   let durationSeconds = 0;
+  let messageCount = 0;
 
   for (const session of sessions) {
     activeSeconds += num(session.activeSeconds);
     durationSeconds += num(session.durationSeconds);
+    messageCount += num(session.messageCount);
   }
 
   return {
     totalTokens,
+    inputTokens,
+    outputTokens,
     cachedTokens,
     activeSeconds,
     durationSeconds,
+    sessionCount: sessions.length,
+    messageCount,
   };
 }
 

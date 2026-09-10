@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "AI Usage · ChatGPT",
   "version": "0.5.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAycUR5hxXa4uYExu4Dphxcsr6zoks2j9gqco3xApui6jsEgz2S4eTrgaMgsf/LAXbCzqykiEUT1fb2gppGXJDKmGwzzeI3kgelAE+Kv88REQ0MW3kWGcXlkGAwpOYrrvTw9cdzZqXFxhj5y32BdEtMNXFEb/o6hNrSBtzKj4zEexEncOMeNf6qV1kQeG95eTi0Q1FOJT+rWhCksoT6SG/TKIs1Prqk4wj29hlqS5Srh5axjraibL09mZJsj0FMkVquBcasCKgEn/YKluz9jyGxiFJCR4dv0jA7D1FO7+V4nX33L2hOAdvflCzHgx3jzjQuVy9+lFtfrzuJvsL3eb66QIDAQAB",
   "description": "Local-only ChatGPT workload dashboard for prompts, thinking time, model usage, and estimated tokens.",
   "permissions": [
     "storage",

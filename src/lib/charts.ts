@@ -1,4 +1,6 @@
 import { computedTotal } from './usage.js';
+import { projectKey } from './labels.js';
+import type { TimeWindow } from './time-range.js';
 
 export type TrendGranularity = 'hour' | 'day';
 
@@ -32,11 +34,33 @@ function dayKey(date: Date): { key: string; label: string } {
   return { key, label: `${date.getMonth() + 1}/${date.getDate()}` };
 }
 
+function emptyPoint(date: Date, granularity: TrendGranularity): TrendPoint {
+  const { key, label } = granularity === 'hour' ? hourKey(date) : dayKey(date);
+  return { key, label, codingTokens: 0, chatgptTokens: 0, totalTokens: 0 };
+}
+
+function filledSlots(window: TimeWindow, granularity: TrendGranularity): TrendPoint[] {
+  const cursor = new Date(window.start);
+  if (granularity === 'hour') cursor.setMinutes(0, 0, 0);
+  else cursor.setHours(0, 0, 0, 0);
+  const slots: TrendPoint[] = [];
+  while (cursor.getTime() < window.end.getTime()) {
+    slots.push(emptyPoint(cursor, granularity));
+    if (granularity === 'hour') cursor.setHours(cursor.getHours() + 1);
+    else cursor.setDate(cursor.getDate() + 1);
+  }
+  return slots;
+}
+
 export function tokenTrend(
   buckets: Record<string, unknown>[],
   granularity: TrendGranularity,
+  window?: TimeWindow,
 ): TrendPoint[] {
   const map = new Map<string, TrendPoint>();
+  if (window) {
+    for (const point of filledSlots(window, granularity)) map.set(point.key, point);
+  }
 
   for (const bucket of buckets) {
     const date = bucketInstant(bucket as { bucketStart: string | Date });
@@ -63,7 +87,10 @@ export function distribution(
 ): DistributionRow[] {
   const map = new Map<string, number>();
   for (const bucket of buckets) {
-    const key = String(bucket[field] ?? '') || '(unknown)';
+    const key =
+      field === 'project'
+        ? projectKey(typeof bucket.project === 'string' ? bucket.project : undefined)
+        : String(bucket[field] ?? '') || '(unknown)';
     map.set(key, (map.get(key) || 0) + computedTotal(bucket));
   }
   return [...map.entries()]

@@ -61,16 +61,20 @@ describe('sidecar dump', () => {
 
     for (const key of [
       'HOME',
+      'USERPROFILE',
       'AI_USAGE_HOME',
       'VIBE_USAGE_CONFIG_DIR',
       'VIBE_USAGE_STATE_DIR',
       'VIBE_USAGE_CACHE_DIR',
       'VIBE_USAGE_CHATGPT_WEB_LOG',
       'AI_USAGE_VIBE_USAGE_SRC',
+      'VIBE_USAGE_CURSOR_MODE',
+      'VIBE_USAGE_CURSOR_DEVICE_LOG',
     ]) {
       prev[key] = process.env[key];
     }
     process.env.HOME = tmpHome;
+    process.env.USERPROFILE = tmpHome;
     process.env.AI_USAGE_HOME = tmpHome;
     process.env.VIBE_USAGE_CONFIG_DIR = tmpHome;
     process.env.VIBE_USAGE_STATE_DIR = tmpHome;
@@ -113,17 +117,27 @@ describe('sidecar dump', () => {
     expect(snapshotHasText(snapshot)).toBe(false);
   });
 
-  it('stampHostname fills missing hostnames and keeps sentinels', async () => {
+  it('stampHostname fills missing hostnames without overwriting existing ones', async () => {
     const { stampHostname } = await import('./dump.mjs');
     const rows = [
       { source: 'codex' },
-      { source: 'cursor', hostname: 'cursor-cloud' },
+      { source: 'cursor', hostname: 'already-set' },
       { source: 'chatgpt-web', hostname: '' },
     ];
     stampHostname(rows, 'mbp.local');
     expect(rows[0].hostname).toBe('mbp.local');
-    expect(rows[1].hostname).toBe('cursor-cloud');
+    expect(rows[1].hostname).toBe('already-set');
     expect(rows[2].hostname).toBe('mbp.local');
+  });
+
+  it('dropCloudRows removes cursor-cloud hostname rows', async () => {
+    const { dropCloudRows } = await import('./dump.mjs');
+    const rows = [
+      { source: 'cursor', hostname: 'Huffies-Mac-mini' },
+      { source: 'cursor', hostname: 'cursor-cloud' },
+      { source: 'codex', hostname: 'Huffies-Mac-mini' },
+    ];
+    expect(dropCloudRows(rows)).toEqual([rows[0], rows[2]]);
   });
 
   it('collectLocal stamps a stable hostname from config without overwriting sentinels', async () => {
@@ -156,6 +170,30 @@ describe('sidecar dump', () => {
     expect(process.env.VIBE_USAGE_CACHE_DIR).toBe(join(tmpHome, 'cache'));
     expect(process.env.VIBE_USAGE_CONFIG_DIR).toBe(tmpHome);
     expect(process.env.VIBE_USAGE_STATE_DIR).toBe(tmpHome);
+    expect(process.env.VIBE_USAGE_CURSOR_MODE).toBe('device');
+    expect(process.env.VIBE_USAGE_CURSOR_DEVICE_LOG).toBe(join(tmpHome, 'cursor-device.jsonl'));
+  });
+
+  it('dumpSnapshot drops leftover cursor-cloud rows when merging history', async () => {
+    writeFileSync(
+      join(tmpHome, 'snapshot.json'),
+      JSON.stringify({
+        buckets: [
+          { source: 'cursor', hostname: 'cursor-cloud', inputTokens: 999 },
+          { source: '__kept__', hostname: 'test-host', inputTokens: 7 },
+        ],
+        sessions: [{ source: 'cursor', hostname: 'cursor-cloud', durationSeconds: 9 }],
+        syncedAt: '2020-01-01T00:00:00.000Z',
+      }) + '\n',
+    );
+
+    const { dumpSnapshot } = await import('./dump.mjs');
+    await dumpSnapshot();
+
+    const snapshot = JSON.parse(readFileSync(join(tmpHome, 'snapshot.json'), 'utf8'));
+    expect(snapshot.buckets.some((b) => b.hostname === 'cursor-cloud')).toBe(false);
+    expect(snapshot.sessions.some((s) => s.hostname === 'cursor-cloud')).toBe(false);
+    expect(snapshot.buckets.some((b) => b.source === '__kept__' && b.inputTokens === 7)).toBe(true);
   });
 
   it('mergeSnapshotBySource keeps skipped sources and replaces succeeded ones', async () => {
@@ -249,13 +287,13 @@ describe('sidecar dump', () => {
     );
   });
 
-  it('resolveVibeUsageSrc tries chatgpt-web checkout then vibe-usage', async () => {
+  it('resolveVibeUsageSrc prefers vendored parsers then sibling checkouts', async () => {
     const { resolveVibeUsageSrc } = await import('./dump.mjs');
     const root = mkdtempSync(join(tmpdir(), 'ai-usage-vu-src-'));
     const repoRoot = join(root, 'ai-usage');
     mkdirSync(repoRoot);
     try {
-      expect(resolveVibeUsageSrc({}, repoRoot)).toBe(join(root, 'vibe-usage-chatgpt-web', 'src'));
+      expect(resolveVibeUsageSrc({}, repoRoot)).toBe(join(repoRoot, 'vendor', 'vibe-usage', 'src'));
 
       mkdirSync(join(root, 'vibe-usage', 'src', 'parsers'), { recursive: true });
       writeFileSync(join(root, 'vibe-usage', 'src', 'parsers', 'index.js'), 'export {}\n');
@@ -264,6 +302,10 @@ describe('sidecar dump', () => {
       mkdirSync(join(root, 'vibe-usage-chatgpt-web', 'src', 'parsers'), { recursive: true });
       writeFileSync(join(root, 'vibe-usage-chatgpt-web', 'src', 'parsers', 'index.js'), 'export {}\n');
       expect(resolveVibeUsageSrc({}, repoRoot)).toBe(join(root, 'vibe-usage-chatgpt-web', 'src'));
+
+      mkdirSync(join(repoRoot, 'vendor', 'vibe-usage', 'src', 'parsers'), { recursive: true });
+      writeFileSync(join(repoRoot, 'vendor', 'vibe-usage', 'src', 'parsers', 'index.js'), 'export {}\n');
+      expect(resolveVibeUsageSrc({}, repoRoot)).toBe(join(repoRoot, 'vendor', 'vibe-usage', 'src'));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

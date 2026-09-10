@@ -2,28 +2,13 @@
 
 Chrome/Edge Native Messaging host for the **AI Usage · ChatGPT** extension. Reads length-prefixed JSON from stdin and appends one jsonl record per line to `~/.ai-usage/chatgpt-web.jsonl`.
 
-`host.mjs` starts with `#!/usr/bin/env node` and should be executable (`chmod +x`). Chrome will not launch a non-executable host.
+AI Usage 启动时会自动：
 
-This repo does **not** write into your browser NativeMessagingHosts directory; copy the manifest yourself (installer / Task 8 will automate this later).
+1. 把 `host.mjs` 复制到 `~/.ai-usage/native-host.mjs`（shebang 写成当前 Node 绝对路径）
+2. 写入 Chrome / Edge / Brave / Arc 的 NativeMessagingHosts 清单
+3. `allowed_origins` 使用扩展清单里固定的 `key`（ID：`mkcbknlcbjgbbabclannkpdeaigfjodl`）
 
-## Install (manual, dev)
-
-1. Copy `com.aiusage.chatgpt.json` into the browser NativeMessagingHosts directory (filename must stay `com.aiusage.chatgpt.json`).
-2. Set `path` to the absolute path of `host.mjs` (the executable host script).
-3. Replace `chrome-extension://REPLACE_WITH_EXTENSION_ID/` in `allowed_origins` with your unpacked extension id (from `chrome://extensions`).
-4. Reload the extension after changing origins.
-
-### Manifest locations
-
-| Browser | Directory / key |
-|---|---|
-| macOS Chrome | `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/` |
-| macOS Edge | `~/Library/Application Support/Microsoft Edge/NativeMessagingHosts/` |
-| Linux Chrome | `~/.config/google-chrome/NativeMessagingHosts/` |
-| Linux Chromium | `~/.config/chromium/NativeMessagingHosts/` |
-| Windows Chrome | Registry `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.aiusage.chatgpt` (default value = manifest path) |
-
-Also see [Chrome Native Messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging).
+你只需在浏览器里「加载已解压的扩展」一次。不要改 JSON。
 
 ## Log path overrides
 

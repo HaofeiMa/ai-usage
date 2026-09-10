@@ -10,6 +10,7 @@ test('manifest includes self-healing active-tab injection permissions', () => {
   const manifest = JSON.parse(read('manifest.json'));
   assert.equal(manifest.name, 'AI Usage · ChatGPT');
   assert.equal(manifest.version, '0.5.0');
+  assert.ok(typeof manifest.key === 'string' && manifest.key.startsWith('MIIB'));
   assert.ok(manifest.permissions.includes('storage'));
   assert.ok(manifest.permissions.includes('activeTab'));
   assert.ok(manifest.permissions.includes('scripting'));
