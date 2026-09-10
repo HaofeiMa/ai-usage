@@ -3,6 +3,8 @@ import {
   filterBucketsByTime,
   filterSessionsByTime,
   timeRangeWindow,
+  trendFillWindow,
+  usesHourlyTrend,
   type TimeRangeId,
 } from './time-range.js';
 
@@ -40,6 +42,32 @@ describe('timeRangeWindow', () => {
     expect(end).toEqual(NOW);
     expect(start.getTime()).toBe(NOW.getTime() - durationMs);
   });
+
+  it('all covers unix epoch through now', () => {
+    const { start, end } = timeRangeWindow('all', NOW);
+    expect(end).toEqual(NOW);
+    expect(start.getTime()).toBe(0);
+  });
+});
+
+describe('usesHourlyTrend', () => {
+  it('uses hours only for today and 24h', () => {
+    expect(usesHourlyTrend('today')).toBe(true);
+    expect(usesHourlyTrend('24h')).toBe(true);
+    expect(usesHourlyTrend('7d')).toBe(false);
+    expect(usesHourlyTrend('all')).toBe(false);
+  });
+});
+
+describe('trendFillWindow', () => {
+  it('for all starts at the first bucket day instead of 1970', () => {
+    const window = timeRangeWindow('all', NOW);
+    const filled = trendFillWindow('all', window, [
+      { bucketStart: iso(local(2026, 8, 1, 12, 0)) },
+    ]);
+    expect(filled?.start).toEqual(local(2026, 8, 1, 0, 0));
+    expect(filled?.end).toEqual(NOW);
+  });
 });
 
 describe('filterBucketsByTime', () => {
@@ -71,6 +99,13 @@ describe('filterBucketsByTime', () => {
     const copy = [...buckets];
     filterBucketsByTime(buckets, window);
     expect(buckets).toEqual(copy);
+  });
+
+  it('all keeps buckets from last year', () => {
+    const window = timeRangeWindow('all', NOW);
+    const old = { bucketStart: iso(local(2025, 0, 2, 12, 0)) };
+    const recent = { bucketStart: iso(new Date(NOW.getTime() - 1000)) };
+    expect(filterBucketsByTime([old, recent], window)).toEqual([old, recent]);
   });
 });
 

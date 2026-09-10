@@ -42,6 +42,7 @@ jobs:
             popup.html \
             popup.css \
             popup.js \
+            icons \
             README.md
 
       - name: Create or update GitHub Release

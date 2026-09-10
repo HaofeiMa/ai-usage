@@ -100,11 +100,17 @@ describe('filterSessions', () => {
 describe('computedTotal', () => {
   it('sums input, output, and reasoning tokens', () => {
     expect(computedTotal(codingBucket)).toBe(160);
+    expect(computedTotal(codingBucket, false)).toBe(160);
+  });
+
+  it('can include cached input tokens in the total', () => {
+    expect(computedTotal(codingBucket, true)).toBe(180);
   });
 
   it('treats missing numeric fields as 0', () => {
     expect(computedTotal({ source: 'cursor' })).toBe(0);
     expect(computedTotal({ source: 'cursor', inputTokens: 5 })).toBe(5);
+    expect(computedTotal({ source: 'cursor', cachedInputTokens: 9 }, true)).toBe(9);
   });
 });
 
@@ -120,6 +126,13 @@ describe('summaryCards', () => {
       sessionCount: 2,
       messageCount: 12,
     });
+  });
+
+  it('adds cache into totalTokens when asked', () => {
+    expect(
+      summaryCards([codingBucket, chatgptBucket], [codingSession, chatgptSession], true)
+        .totalTokens,
+    ).toBe(460);
   });
 
   it('treats missing numeric fields as 0', () => {
@@ -152,8 +165,9 @@ describe('dropCloudRows', () => {
 });
 
 describe('trayTokens', () => {
-  it('sums computedTotal plus cachedInputTokens per bucket', () => {
-    expect(trayTokens([codingBucket, chatgptBucket])).toBe(460);
+  it('matches the dashboard total for the same cache setting', () => {
+    expect(trayTokens([codingBucket, chatgptBucket], false)).toBe(440);
+    expect(trayTokens([codingBucket, chatgptBucket], true)).toBe(460);
   });
 
   it('treats missing numeric fields as 0', () => {

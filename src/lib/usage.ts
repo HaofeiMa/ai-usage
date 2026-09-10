@@ -49,15 +49,19 @@ export function filterSessions<T extends { source: string }>(
   return filterByView(sessions, view, includeChatgptInTotal);
 }
 
-export function computedTotal(b: Record<string, unknown>): number {
-  return (
-    num(b.inputTokens) + num(b.outputTokens) + num(b.reasoningOutputTokens)
-  );
+export function computedTotal(
+  b: Record<string, unknown>,
+  includeCache = false,
+): number {
+  const base =
+    num(b.inputTokens) + num(b.outputTokens) + num(b.reasoningOutputTokens);
+  return includeCache ? base + num(b.cachedInputTokens) : base;
 }
 
 export function summaryCards(
   buckets: Record<string, unknown>[],
   sessions: Record<string, unknown>[],
+  includeCache = false,
 ) {
   let totalTokens = 0;
   let inputTokens = 0;
@@ -65,7 +69,7 @@ export function summaryCards(
   let cachedTokens = 0;
 
   for (const bucket of buckets) {
-    totalTokens += computedTotal(bucket);
+    totalTokens += computedTotal(bucket, includeCache);
     inputTokens += num(bucket.inputTokens);
     outputTokens += num(bucket.outputTokens) + num(bucket.reasoningOutputTokens);
     cachedTokens += num(bucket.cachedInputTokens);
@@ -93,11 +97,14 @@ export function summaryCards(
   };
 }
 
-export function trayTokens(buckets: Record<string, unknown>[]): number {
+export function trayTokens(
+  buckets: Record<string, unknown>[],
+  includeCache = false,
+): number {
   let total = 0;
 
   for (const bucket of buckets) {
-    total += computedTotal(bucket) + num(bucket.cachedInputTokens);
+    total += computedTotal(bucket, includeCache);
   }
 
   return total;

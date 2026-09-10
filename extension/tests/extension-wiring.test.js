@@ -17,6 +17,20 @@ test('manifest includes self-healing active-tab injection permissions', () => {
   assert.ok(manifest.permissions.includes('nativeMessaging'));
   assert.equal(manifest.background.service_worker, 'background.js');
   assert.ok(manifest.host_permissions.includes('https://chatgpt.com/*'));
+  assert.deepEqual(manifest.icons, {
+    '16': 'icons/16.png',
+    '32': 'icons/32.png',
+    '48': 'icons/48.png',
+    '128': 'icons/128.png',
+  });
+  assert.deepEqual(manifest.action.default_icon, {
+    '16': 'icons/16.png',
+    '32': 'icons/32.png',
+  });
+  for (const file of Object.values(manifest.icons)) {
+    assert.ok(fs.existsSync(path.join(root, file)), file);
+  }
+  assert.match(read('popup.html'), /icons\/128\.png/);
   assert.equal(manifest.content_scripts[0].world, 'ISOLATED');
   assert.equal(manifest.content_scripts[1].world, 'MAIN');
 });

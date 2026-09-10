@@ -117,6 +117,53 @@ describe('sidecar dump', () => {
     expect(snapshotHasText(snapshot)).toBe(false);
   });
 
+  it('resolveStableHostname uses the OS name when config is empty', async () => {
+    const { resolveStableHostname } = await import('./dump.mjs');
+    expect(resolveStableHostname({}, 'Huffies-Mac-mini.local')).toBe('Huffies-Mac-mini');
+    expect(resolveStableHostname({ hostname: 'desk-1' }, 'ignored.local')).toBe('desk-1');
+  });
+
+  it('collectLocal emits cursor sessions from the device log', async () => {
+    writeFileSync(
+      join(tmpHome, 'cursor-device.jsonl'),
+      [
+        JSON.stringify({
+          v: 1,
+          event: 'stop',
+          ts: '2026-09-10T02:00:00.000Z',
+          model: 'cursor-grok-4.6-xhigh',
+          input_tokens: 12,
+          output_tokens: 3,
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+          generation_id: 'gen-a',
+          conversation_id: 'conv-dump',
+          project: 'ai-usage',
+        }),
+        JSON.stringify({
+          v: 1,
+          event: 'stop',
+          ts: '2026-09-10T02:04:00.000Z',
+          model: 'cursor-grok-4.6-xhigh',
+          input_tokens: 20,
+          output_tokens: 5,
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+          generation_id: 'gen-b',
+          conversation_id: 'conv-dump',
+          project: 'ai-usage',
+        }),
+      ].join('\n') + '\n',
+    );
+    const { collectLocal } = await import('./dump.mjs');
+    const { buckets, sessions } = await collectLocal();
+    expect(buckets.some((row) => row.source === 'cursor' && row.inputTokens > 0)).toBe(true);
+    const cursorSessions = sessions.filter((row) => row.source === 'cursor');
+    expect(cursorSessions.length).toBeGreaterThan(0);
+    expect(cursorSessions[0].messageCount).toBeGreaterThan(0);
+    expect(cursorSessions[0].durationSeconds).toBeGreaterThan(0);
+  });
+
   it('stampHostname fills missing hostnames without overwriting existing ones', async () => {
     const { stampHostname } = await import('./dump.mjs');
     const rows = [

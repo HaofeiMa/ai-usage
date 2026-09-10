@@ -56,6 +56,7 @@ export function tokenTrend(
   buckets: Record<string, unknown>[],
   granularity: TrendGranularity,
   window?: TimeWindow,
+  includeCache = false,
 ): TrendPoint[] {
   const map = new Map<string, TrendPoint>();
   if (window) {
@@ -69,7 +70,7 @@ export function tokenTrend(
     const point =
       map.get(key) ||
       ({ key, label, codingTokens: 0, chatgptTokens: 0, totalTokens: 0 } satisfies TrendPoint);
-    const tokens = computedTotal(bucket);
+    const tokens = computedTotal(bucket, includeCache);
     if (bucket.source === CHATGPT_SOURCE) point.chatgptTokens += tokens;
     else point.codingTokens += tokens;
     point.totalTokens = point.codingTokens + point.chatgptTokens;
@@ -84,6 +85,7 @@ export type DistributionRow = { key: string; tokens: number };
 export function distribution(
   buckets: Record<string, unknown>[],
   field: 'hostname' | 'source' | 'model' | 'project',
+  includeCache = false,
 ): DistributionRow[] {
   const map = new Map<string, number>();
   for (const bucket of buckets) {
@@ -91,7 +93,7 @@ export function distribution(
       field === 'project'
         ? projectKey(typeof bucket.project === 'string' ? bucket.project : undefined)
         : String(bucket[field] ?? '') || '(unknown)';
-    map.set(key, (map.get(key) || 0) + computedTotal(bucket));
+    map.set(key, (map.get(key) || 0) + computedTotal(bucket, includeCache));
   }
   return [...map.entries()]
     .map(([key, tokens]) => ({ key, tokens }))

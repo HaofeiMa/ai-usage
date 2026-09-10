@@ -3,6 +3,8 @@
 body { margin: 0; width: 390px; min-height: 520px; background: Canvas; color: CanvasText; }
 main { padding: 18px; }
 header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 16px; }
+.brand { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.brand img { width: 36px; height: 36px; border-radius: 9px; flex: 0 0 auto; }
 h1 { font-size: 20px; line-height: 1.1; margin: 0 0 5px; }
 header p { margin: 0; opacity: .62; font-size: 12px; }
 .status { font-size: 11px; padding: 5px 8px; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 999px; opacity: .8; white-space: nowrap; }

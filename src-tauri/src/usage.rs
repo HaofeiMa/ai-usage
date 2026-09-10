@@ -11,14 +11,19 @@ pub fn number_field(value: &Value, key: &str) -> f64 {
     }
 }
 
-pub fn computed_total(bucket: &Value) -> f64 {
-    number_field(bucket, "inputTokens")
+pub fn computed_total(bucket: &Value, include_cache: bool) -> f64 {
+    let base = number_field(bucket, "inputTokens")
         + number_field(bucket, "outputTokens")
-        + number_field(bucket, "reasoningOutputTokens")
+        + number_field(bucket, "reasoningOutputTokens");
+    if include_cache {
+        base + number_field(bucket, "cachedInputTokens")
+    } else {
+        base
+    }
 }
 
-pub fn tray_tokens(bucket: &Value) -> f64 {
-    computed_total(bucket) + number_field(bucket, "cachedInputTokens")
+pub fn tray_tokens(bucket: &Value, include_cache: bool) -> f64 {
+    computed_total(bucket, include_cache)
 }
 
 pub fn include_source(source: &str, include_chatgpt: bool) -> bool {
@@ -66,7 +71,12 @@ pub fn in_today(bucket_start: &str, now: DateTime<Local>) -> bool {
     instant >= start_utc && instant < end_utc
 }
 
-pub fn tray_label(buckets: &[Value], include_chatgpt: bool, now: DateTime<Local>) -> String {
+pub fn tray_label(
+    buckets: &[Value],
+    include_chatgpt: bool,
+    include_cache: bool,
+    now: DateTime<Local>,
+) -> String {
     let total: f64 = buckets
         .iter()
         .filter(|bucket| {
@@ -80,7 +90,7 @@ pub fn tray_label(buckets: &[Value], include_chatgpt: bool, now: DateTime<Local>
                     .map(|start| in_today(start, now))
                     .unwrap_or(false)
         })
-        .map(tray_tokens)
+        .map(|bucket| tray_tokens(bucket, include_cache))
         .sum();
     format_compact_tokens(total)
 }
@@ -132,8 +142,25 @@ mod tests {
                 "reasoningOutputTokens": 0
             }),
         ];
-        assert_eq!(tray_label(&buckets, true, now), "2.0M");
-        assert_eq!(tray_label(&buckets, false, now), "1.2M");
+        assert_eq!(tray_label(&buckets, true, false, now), "2.0M");
+        assert_eq!(tray_label(&buckets, false, false, now), "1.2M");
+    }
+
+    #[test]
+    fn tray_label_includes_cache_when_asked() {
+        let now = Local.with_ymd_and_hms(2026, 9, 9, 15, 30, 0).unwrap();
+        let (start, _) = today_window(now);
+        let today = start.with_timezone(&Utc).to_rfc3339();
+        let buckets = vec![json!({
+            "source": "cursor",
+            "bucketStart": today,
+            "inputTokens": 1_000_000,
+            "outputTokens": 200_000,
+            "cachedInputTokens": 800_000,
+            "reasoningOutputTokens": 0
+        })];
+        assert_eq!(tray_label(&buckets, true, false, now), "1.2M");
+        assert_eq!(tray_label(&buckets, true, true, now), "2.0M");
     }
 
     #[test]
@@ -161,6 +188,6 @@ mod tests {
                 "reasoningOutputTokens": 0
             }),
         ];
-        assert_eq!(tray_label(&buckets, true, now), "1.2M");
+        assert_eq!(tray_label(&buckets, true, false, now), "1.2M");
     }
 }

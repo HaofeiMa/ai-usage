@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { loadConfig } from '../config.js';
-import { aggregateToBuckets } from './aggregate.js';
+import { aggregateToBuckets, extractSessions } from './aggregate.js';
 import { projectFromCwd } from './fs-utils.js';
 import { queryDbJsonSnapshotOnLock, sqliteUnavailableError, isSqliteUnavailableError } from './sqlite.js';
 
@@ -275,6 +275,62 @@ export function entriesFromDeviceLog(text) {
   return order.map(id => byId.get(id));
 }
 
+function deviceLogRecords(text) {
+  const byId = new Map();
+  const order = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let rec;
+    try { rec = JSON.parse(trimmed); } catch { continue; }
+    if (!rec || rec.v !== 1) continue;
+    const timestamp = parseDate(rec.ts);
+    if (!timestamp) continue;
+    const model = String(rec.model || '').trim();
+    const id = rec.generation_id || rec.subagent_id || `${rec.event || 'stop'}:${rec.ts}:${model}`;
+    if (!byId.has(id)) order.push(id);
+    byId.set(id, { rec, timestamp, model });
+  }
+  return order.map(id => byId.get(id));
+}
+
+export function eventsFromDeviceLog(text) {
+  const groups = new Map();
+  for (const { rec, timestamp, model } of deviceLogRecords(text)) {
+    const sessionId = String(rec.conversation_id || rec.generation_id || rec.subagent_id || '').trim()
+      || `${rec.event || 'stop'}:${rec.ts}:${model}`;
+    const role = rec.role === 'user' || rec.event === 'beforeSubmitPrompt' ? 'user' : 'assistant';
+    const event = {
+      sessionId,
+      source: 'cursor',
+      project: projectFromCwd(typeof rec.project === 'string' ? rec.project : undefined),
+      timestamp,
+      role,
+    };
+    if (!groups.has(sessionId)) groups.set(sessionId, []);
+    groups.get(sessionId).push(event);
+  }
+
+  const events = [];
+  for (const list of groups.values()) {
+    list.sort((a, b) => a.timestamp - b.timestamp);
+    if (!list.some((event) => event.role === 'user')) {
+      const first = list[0];
+      events.push({
+        ...first,
+        role: 'user',
+        timestamp: new Date(first.timestamp.getTime() - 1000),
+      });
+    }
+    events.push(...list);
+  }
+  return events;
+}
+
+export function sessionsFromDeviceLog(text) {
+  return extractSessions(eventsFromDeviceLog(text));
+}
+
 function parseDeviceLog() {
   const logPath = getCursorDeviceLogPath();
   if (!existsSync(logPath)) {
@@ -293,7 +349,10 @@ function parseDeviceLog() {
     skip.skip = true;
     throw skip;
   }
-  return { buckets: aggregateToBuckets(entriesFromDeviceLog(text)), sessions: [] };
+  return {
+    buckets: aggregateToBuckets(entriesFromDeviceLog(text)),
+    sessions: sessionsFromDeviceLog(text),
+  };
 }
 
 export async function parse() {

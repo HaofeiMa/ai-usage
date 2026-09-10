@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>LSUIElement</key>
-  <false/>
+  <true/>
   <key>CFBundleName</key>
   <string>AI Usage</string>
   <key>CFBundleDisplayName</key>
